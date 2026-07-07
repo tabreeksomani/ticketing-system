@@ -95,6 +95,15 @@
 
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+  // Rejects a scan before it even reaches the API - matters most for the live
+  // camera loop, which calls this on every decoded QR code (a random
+  // unrelated QR code in the environment would otherwise fire an API call on
+  // every scan). The server enforces this too, so this is purely an instant-
+  // feedback / fewer-wasted-requests optimization, not the real guard.
+  function isValidTicketCode(code) {
+    return typeof code === 'string' && code.startsWith('MLEBC');
+  }
+
   // departureTime is stored as free-form text (whatever was typed in via psql
   // when the timeslot was created), always meant as Pacific Time wall-clock -
   // this prettifies it for display. Parsed manually (not via `new Date(raw)`)
@@ -363,6 +372,11 @@
 
   async function handleScan(code) {
     if (!code) return;
+    if (!isValidTicketCode(code)) {
+      feedback(false);
+      showToast('Not a valid ticket code');
+      return;
+    }
     if (batch.some(b => b.code === code)) {
       feedback(false);
       showToast('Already scanned in this batch');
@@ -534,6 +548,11 @@
 
   async function handleLookup(code) {
     if (!code) return;
+    if (!isValidTicketCode(code)) {
+      feedback(false);
+      showToast('Not a valid ticket code');
+      return;
+    }
     try {
       const ticket = await api('/tickets/lookup?code=' + encodeURIComponent(code));
       feedback(true);
@@ -704,6 +723,11 @@
 
   async function handleCheckinBoard(code) {
     if (!code) return;
+    if (!isValidTicketCode(code)) {
+      feedback(false);
+      showToast('Not a valid ticket code');
+      return;
+    }
     try {
       const updated = await api(`/buses/${activeCheckinBusId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
       checkinBuses = checkinBuses.map(b => (b.id === activeCheckinBusId ? updated : b));
