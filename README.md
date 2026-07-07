@@ -8,27 +8,38 @@ talking to one JSON API.
 
 ## Quick start (for a new collaborator/environment)
 
+Requires [Docker](https://www.docker.com/) (for a local Postgres - `docker compose`
+must work) and Node.
+
 ```bash
 git clone https://github.com/tabreeksomani/ticketing-system.git
 cd ticketing-system
 npm install
-npm run setup   # creates .env from .env.example (if missing) + seeds example data
-npm start       # http://localhost:8000
+npm run setup   # starts Postgres, creates .env, seeds example data, starts the server
 ```
 
-You'll need a Postgres instance reachable at whatever `DATABASE_URL` ends up pointing
-to (edit `.env` after `npm run setup` creates it, before running `npm start`, if the
-default `postgres://localhost:5432/ticketing_system` isn't right for you). `npm run
-setup` seeds `scripts/example.json` by default (placeholder hubs/passwords - see
-**Manual setup** below); pass a different file for real data:
+That's genuinely the whole thing - `npm run setup` starts Postgres via
+`docker-compose.yml` (port 5433, not 5432, to avoid clashing with a Postgres
+install you might already have running natively), waits for it to be ready,
+creates `.env` from `.env.example` if one doesn't exist, seeds
+`scripts/example.json` (placeholder hubs/passwords - see **Manual setup**
+below), and starts the server at `http://localhost:8000`.
+
+Pass a different file to seed real data instead of the placeholder example:
 
 ```bash
 npm run setup -- scripts/your-real-data.json
 ```
 
-`npm run setup` is safe to re-run — it never overwrites an existing `.env`, and
-`scripts/seed.js` upserts (updates existing hubs/logins/timeslots instead of
-duplicating them).
+Safe to re-run — `docker compose up -d` no-ops if Postgres is already running,
+`.env` is never overwritten if it already exists, and `scripts/seed.js` upserts
+(updates existing hubs/logins/timeslots instead of duplicating them). The
+Postgres container keeps running in the background after the script exits
+(`docker compose down` in the project folder stops it).
+
+If you'd rather not use Docker, point `DATABASE_URL` in `.env` at any other
+Postgres instance you have access to, then run `npm start` directly instead
+of `npm run setup` (which assumes Docker).
 
 ## Design philosophy
 
@@ -177,7 +188,8 @@ src/auth.js         JWT signing/verification, role/hub-scope guards
 src/errors.js       HttpError + asyncHandler
 src/util.js         Timing-safe string comparison
 src/routes/         auth.js, hubs.js (timeslots read), buses.js, tickets.js, dashboard.js
-scripts/setup.js    One-time onboarding: creates .env, runs seed.js
+docker-compose.yml  Local Postgres for development (started by `npm run setup`)
+scripts/setup.js    One-command run: starts Postgres, creates .env, seeds, starts the server
 scripts/seed.js     Manual bulk setup: upserts hubs/timeslots/logins from a JSON file
 scripts/example.json  Placeholder data matching seed.js's expected shape
 ```
