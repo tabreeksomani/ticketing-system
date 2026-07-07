@@ -115,7 +115,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
   );
   const ticket = rows[0];
   if (!ticket) {
-    jsonError('Unknown ticket code', 404);
+    jsonError('This ticket has not been allocated', 404);
   }
   if (user.role === 'volunteer' && ticket.hub_id !== user.hubId) {
     jsonError('This ticket was not sold at your hub', 403);
