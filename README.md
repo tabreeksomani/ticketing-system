@@ -6,6 +6,30 @@ board hub buses.
 Stack: Node/Express + Postgres, no build step, no frontend framework — two static HTML portals
 talking to one JSON API.
 
+## Quick start (for a new collaborator/environment)
+
+```bash
+git clone https://github.com/tabreeksomani/ticketing-system.git
+cd ticketing-system
+npm install
+npm run setup   # creates .env from .env.example (if missing) + seeds example data
+npm start       # http://localhost:8000
+```
+
+You'll need a Postgres instance reachable at whatever `DATABASE_URL` ends up pointing
+to (edit `.env` after `npm run setup` creates it, before running `npm start`, if the
+default `postgres://localhost:5432/ticketing_system` isn't right for you). `npm run
+setup` seeds `scripts/example.json` by default (placeholder hubs/passwords - see
+**Manual setup** below); pass a different file for real data:
+
+```bash
+npm run setup -- scripts/your-real-data.json
+```
+
+`npm run setup` is safe to re-run — it never overwrites an existing `.env`, and
+`scripts/seed.js` upserts (updates existing hubs/logins/timeslots instead of
+duplicating them).
+
 ## Design philosophy
 
 - **Route** (hubs, timeslots, buses) and **Login** (credentials) are static configuration,
@@ -26,7 +50,14 @@ There's no self-provisioned default login for either — see **Manual setup** be
 
 ## Manual setup
 
-Nothing about hubs, timeslots, buses, or logins is created through the app. Insert them directly:
+Nothing about hubs, timeslots, buses, or logins is created through the app - no CRUD API, no
+admin forms. Two ways to populate them:
+
+- **`node scripts/seed.js path/to/data.json`** (or `npm run setup -- path/to/data.json`) - reads
+  a JSON file describing hubs, their timeslots, and login passwords, and upserts everything in
+  one shot. See `scripts/example.json` for the expected shape. Safe to re-run with updated
+  numbers - existing rows get updated in place, not duplicated.
+- **Raw `psql`**, for one-off tweaks or anything the seed script doesn't cover (like buses):
 
 ```sql
 INSERT INTO hubs (id, name, travel_minutes) VALUES ('surrey', 'Surrey', 45);
@@ -101,7 +132,8 @@ volunteer/location model, rather than as a separate role/login/page.
 2. Set a real fixed `JWT_SECRET` — if unset, the app falls back to a random value generated at
    process startup, which is fine for local dev but invalidates all sessions on every restart.
 3. Run `npm install && npm start`. The schema (hubs/timeslots/logins/buses/tickets/login_attempts
-   tables) creates itself on first request - the *rows* in it don't (see Manual setup above).
+   tables) creates itself on first request - the *rows* in it don't (see Manual setup above, or
+   run `npm run setup -- your-data.json` to seed them).
 4. `npm run dev` restarts on file changes during local development.
 
 ## Mobile camera scanning
@@ -145,4 +177,7 @@ src/auth.js         JWT signing/verification, role/hub-scope guards
 src/errors.js       HttpError + asyncHandler
 src/util.js         Timing-safe string comparison
 src/routes/         auth.js, hubs.js (timeslots read), buses.js, tickets.js, dashboard.js
+scripts/setup.js    One-time onboarding: creates .env, runs seed.js
+scripts/seed.js     Manual bulk setup: upserts hubs/timeslots/logins from a JSON file
+scripts/example.json  Placeholder data matching seed.js's expected shape
 ```
