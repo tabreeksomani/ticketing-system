@@ -3,24 +3,16 @@
     "password": "ChangeThisAdminPassword123"
   },
   "hubs": [
-    {
-      "name": "Surrey",
-      "travelMinutes": 45,
-      "volunteerPassword": "ChangeThisSurreyPassword123",
-      "timeslots": [
-        { "departureTime": "2026-07-06T18:00:00", "capacity": 50 },
-        { "departureTime": "2026-07-06T19:00:00", "capacity": 50 },
-        { "departureTime": "2026-07-06T20:00:00", "capacity": 30 }
-      ]
-    },
-    {
-      "name": "Abbotsford",
-      "travelMinutes": 60,
-      "volunteerPassword": "ChangeThisAbbotsfordPassword123",
-      "timeslots": [
-        { "departureTime": "2026-07-06T18:30:00", "capacity": 40 },
-        { "departureTime": "2026-07-06T19:30:00", "capacity": 40 }
-      ]
-    }
+    { "name": "Burnaby Lake", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Darkhana", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Tricities", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Maple Ridge", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Abbotsford", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Fraser Valley", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Headquarters", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Capilano University", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Simon Fraser University", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Downtown", "volunteerPassword": "ChangeThisPassword123" },
+    { "name": "Richmond", "volunteerPassword": "ChangeThisPassword123" }
   ]
 }
