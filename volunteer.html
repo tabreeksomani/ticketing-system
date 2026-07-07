@@ -101,7 +101,7 @@
   // every scan). The server enforces this too, so this is purely an instant-
   // feedback / fewer-wasted-requests optimization, not the real guard.
   function isValidTicketCode(code) {
-    return typeof code === 'string' && code.startsWith('MLEBC');
+    return typeof code === 'string' && code.startsWith('MQEBC');
   }
 
   // departureTime is stored as free-form text (whatever was typed in via psql
