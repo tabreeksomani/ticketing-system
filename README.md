@@ -102,10 +102,22 @@ login back if needed. Do this setup once before an event; there's nothing to re-
    and, if it hasn't boarded yet and isn't a standby ticket, lists every other timeslot at that
    hub with live availability. Picking one and confirming moves the ticket there — there's no
    separate "release" step, since capacity is always computed live from ticket counts.
-3. **Check-in** (`volunteer.html`) lets a volunteer pick a bus from a dropdown and
+3. **Check-in Scan** (`volunteer.html`) lets a volunteer pick a bus from a dropdown and
    scan tickets onto it. The first scan flips the bus from `scheduled` to `boarding`. Scanning an
    unrecognized code issues it as a brand-new **standby ticket** on the spot (see below).
-   "Close Bus & Mark Departed" locks further boarding and timestamps the departure.
+   "Complete & Depart" locks further boarding and timestamps the departure.
+
+All ticket codes are expected to start with the prefix `MLEBC` - every scan handler on
+`volunteer.html` (Allocation, Update/Reassignment, Check-in Scan) rejects anything else
+instantly, client-side, with sound/vibration feedback, before it ever reaches the API.
+
+## Ingress tracking (one scan per ticket)
+
+Once a ticket has been scanned onto any bus at Check-in Scan, it's marked `is_ingressed` and
+can't be scanned again - a second attempt is rejected with "This ticket has already been
+scanned in and cannot be scanned again until egress." There's a matching `is_egressed` column
+already in the `tickets` table, but nothing sets it yet - no egress trigger has been decided,
+so today this is effectively "once, ever" per ticket.
 
 ## Concurrency: no oversold timeslots
 
@@ -126,9 +138,21 @@ counts against any timeslot's capacity) — and boards it in the same step.
 
 ## Dashboards (`admin.html`)
 
-- **Sales** — summarized by hub (sold/capacity, boarded, no-show, standby); tap a hub to expand
-  the per-timeslot breakdown.
+- **Sales**:
+  - **Total Allocated** — a single headline number, total tickets sold across every hub.
+  - **Hubs Overview** — one row per hub: hub, time to central, capacity, allocated, remaining.
+  - **Daily Sales by Khane** — a bar graph of tickets sold per day, with a checkbox multiselect
+    (one per hub, defaults to all checked) to include/exclude hubs from the daily totals. Days
+    are bucketed by **Pacific-time calendar day** (`sold_at AT TIME ZONE 'America/Los_Angeles'`),
+    not UTC day.
+  - Per-hub cards (tap to expand) — sold/capacity, boarded, standby issued, and a per-timeslot
+    table (departure, capacity, allocated, remaining, boarded) with a totals row.
 - **Transport Buses** — every bus grouped by status: scheduled, boarding, departed, arrived.
+
+Departure times are always displayed in **Pacific Time**, regardless of the viewing device's own
+timezone setting - the stored `departure_time` text is parsed as Pacific wall-clock time
+directly, not reinterpreted through the browser's local timezone (which would show a different
+clock time to someone viewing from outside Pacific otherwise).
 
 ## Central hub
 
