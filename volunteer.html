@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<title>Volunteer — Ticketing</title>
+<script src="vendor/jsQR.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  html, body { margin: 0; padding: 0; min-height: 100vh; background: #FFFFFF; color: #241C10; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: #FFFFFF; border-bottom: 1px solid #E8E1D3; padding: max(14px, env(safe-area-inset-top)) 16px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  header .title { font-weight: 800; font-size: 16px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
+  header .sub { font-size: 11px; color: #756c5a; }
+  header button { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 9px 12px; cursor: pointer; min-height: 40px; }
+  main { padding: 14px; max-width: 480px; margin: 0 auto; padding-bottom: 40px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tab { flex: 1; text-align: center; padding: 11px 4px; border-radius: 10px; background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; cursor: pointer; font-size: 12px; font-weight: 700; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+  .tab.active { background: #8C734C; color: #fff; border-color: #8C734C; }
+  .tab.disabled { opacity: 0.45; cursor: default; }
+  .card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
+  input, select { width: 100%; background: #F7F5F0; border: 1px solid #DDD3BE; border-radius: 10px; color: #241C10; padding: 14px; font-size: 17px; margin-bottom: 10px; outline: none; min-height: 50px; }
+  input:focus { border-color: #8C734C; }
+  label { font-size: 11px; color: #57534E; display: block; margin-bottom: 4px; }
+  .btn { width: 100%; padding: 14px; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; min-height: 48px; }
+  .btn-primary { background: #8C734C; color: #fff; }
+  .btn-outline { background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; }
+  .scan-input { font-size: 19px; text-align: center; letter-spacing: 0.5px; }
+  .big-count { font-size: 44px; font-weight: 800; text-align: center; line-height: 1; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
+  .big-count .of { font-size: 18px; color: #756c5a; font-weight: 600; }
+  .cap-label { text-align: center; font-size: 12px; color: #756c5a; margin: 6px 0 14px; }
+  .btn-danger { background: #B91C1C; color: #fff; }
+  .bus-status { font-size: 10px; text-transform: uppercase; font-weight: 700; padding: 4px 9px; border-radius: 10px; }
+  .status-scheduled { background: #F1F0EC; color: #57534E; }
+  .status-boarding { background: #FEF3C7; color: #92400E; }
+  .status-departed { background: #DCFCE7; color: #166534; }
+  .status-arrived { background: #F3ECDD; color: #6b5636; }
+  .batch-list { max-height: 34vh; overflow-y: auto; margin-top: 4px; }
+  .batch-row { display: flex; justify-content: space-between; align-items: center; background: #F7F5F0; border-radius: 8px; padding: 11px 12px; margin-bottom: 6px; font-size: 14px; color: #241C10; }
+  .batch-row button { background: none; border: none; color: #756c5a; font-size: 20px; cursor: pointer; min-width: 36px; min-height: 36px; }
+  .reject-row { background: #FEE2E2; color: #B91C1C; }
+  .pill { background: #FFFFFF; color: #57534E; border: 1px solid #E2D9C4; border-radius: 10px; padding: 14px; margin-bottom: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; min-height: 52px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
+  .pill.selected { border-color: #8C734C; background: #F3ECDD; }
+  .pill .name { font-weight: 700; color: #241C10; font-size: 15px; }
+  .pill .meta { font-size: 12px; color: #756c5a; margin-top: 2px; }
+  .empty { text-align: center; color: #756c5a; padding: 26px 16px; font-size: 13px; }
+  .notice { text-align: center; padding: 16px; border-radius: 10px; font-size: 14px; font-weight: 600; }
+  .notice-warn { background: #FEF3C7; color: #92400E; }
+  .ticket-code { font-family: 'Palatino Linotype', Georgia, serif; font-size: 22px; font-weight: 800; text-align: center; color: #241C10; }
+  .toast { position: fixed; top: calc(66px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 40; max-width: 92%; text-align: center; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  .toast-error { background: #FEE2E2; border: 1px solid #FCA5A5; color: #B91C1C; }
+  .toast-success { background: #DCFCE7; border: 1px solid #86EFAC; color: #166534; }
+  .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; position: relative; overflow: hidden; }
+  .brand-watermark { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 460px; max-width: 160%; opacity: 0.14; pointer-events: none; z-index: 0; }
+  .login-card { position: relative; z-index: 1; max-width: 360px; width: 100%; }
+  .login-card h1 { font-size: 18px; margin: 0 0 4px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
+  .login-card .sub { font-size: 12px; color: #756c5a; margin-bottom: 18px; }
+
+  /* ---- camera scanner ---- */
+  .scanner-card { padding: 0; overflow: hidden; position: relative; }
+  .scanner-video-wrap { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; overflow: hidden; }
+  .scanner-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .scan-frame { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 62%; aspect-ratio: 1; border: 3px solid rgba(140,115,76,0.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0,0,0,0.35); pointer-events: none; }
+  .scan-frame.flash { border-color: #22c55e; }
+  .scanner-status { padding: 10px 14px; font-size: 12px; color: #756c5a; text-align: center; background: #FFFFFF; }
+  .scanner-status.warn { color: #B91C1C; }
+  .manual-toggle { background: none; border: none; color: #8C734C; font-size: 13px; text-align: center; width: 100%; padding: 10px 0; cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+  const API = 'api';
+  let token = localStorage.getItem('volunteer_token');
+  let user = JSON.parse(localStorage.getItem('volunteer_user') || 'null');
+  let tab = 'allocation'; // 'allocation' | 'reassign' | 'checkin'
+
+  // ---- Ticket Allocation state ----
+  let batch = []; // [{code, valid, reason}]
+  let allocTimeslots = [];
+  let allocStep = 'scan'; // 'scan' | 'select'
+  let selectedTimeslotId = null;
+  let selectedStandby = false;
+
+  // ---- Ticket Update/Reassignment state ----
+  let currentTicket = null;
+  let reassignTimeslots = [];
+  let selectedReassignSlotId = null;
+
+  // ---- Ticket Check-in Scan state ----
+  let checkinBuses = [];
+  let activeCheckinBusId = null;
+
+  let audioCtx = null;
+  let activeScanner = null;
+
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // departureTime is stored as free-form text (whatever was typed in via psql
+  // when the timeslot was created), always meant as Pacific Time wall-clock -
+  // this prettifies it for display. Parsed manually (not via `new Date(raw)`)
+  // because a plain "new Date()" on a timezone-less string gets reinterpreted
+  // using the *viewer's own device* timezone, which would show a different
+  // clock time to someone viewing from outside Pacific. Falls back to the raw
+  // value if it doesn't match the expected shape.
+  function formatDepartureTime(raw) {
+    if (!raw) return '';
+    const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+    if (!m) return raw;
+    const utc = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+    const formatted = utc.toLocaleString('en-US', {
+      timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+    return `${formatted} PT`;
+  }
+
+  // ---- inline SVG icon library (no external icon font/CDN) ----
+  const ICON_PATHS = {
+    ticket: '<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z"/><path d="M13 5v2M13 11v2M13 17v2"/>',
+    arrowRight: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+    check: '<path d="M5 13l4 4L19 7"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    swap: '<path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/>',
+    bus: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 11h18M8 6v5M16 6v5"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="16.5" cy="19" r="1.5"/>',
+  };
+  function icon(name, size) {
+    size = size || 16;
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;flex-shrink:0;">${ICON_PATHS[name] || ''}</svg>`;
+  }
+
+  function unlockAudio() {
+    if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  }
+  function feedback(success) {
+    if (navigator.vibrate) navigator.vibrate(success ? 35 : [40, 60, 40]);
+    if (!audioCtx) return;
+    try {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = success ? 920 : 220;
+      gain.gain.value = 0.12;
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + (success ? 0.09 : 0.18));
+    } catch (e) {}
+  }
+
+  function showToast(msg, kind) {
+    const t = document.createElement('div');
+    t.className = 'toast ' + (kind === 'success' ? 'toast-success' : 'toast-error');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2400);
+  }
+  async function api(path, options = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const res = await fetch(API + path, { ...options, headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  // ============================================================ SCANNER ====
+  function stopActiveScanner() {
+    if (activeScanner) { activeScanner.stop(); activeScanner = null; }
+  }
+
+  function startCameraScanner(videoEl, statusEl, frameEl, onDecode) {
+    stopActiveScanner();
+    let stopped = false;
+    let stream = null;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const recent = new Map();
+
+    function setStatus(msg, warn) {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.classList.toggle('warn', !!warn);
+    }
+
+    async function start() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus('Camera not available in this browser — use manual entry below.', true);
+        return;
+      }
+      const secure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      if (!secure) {
+        setStatus('Camera scanning needs HTTPS on this domain — use manual entry below for now.', true);
+        return;
+      }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        setStatus('');
+        loop();
+      } catch (e) {
+        setStatus('Camera access denied — use manual entry below, or allow camera access and reload.', true);
+      }
+    }
+
+    function loop() {
+      if (stopped) return;
+      if (videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+        try {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+          if (result && result.data) {
+            const now = Date.now();
+            if (!recent.has(result.data) || now - recent.get(result.data) > 2000) {
+              recent.set(result.data, now);
+              if (frameEl) {
+                frameEl.classList.add('flash');
+                setTimeout(() => frameEl.classList.remove('flash'), 300);
+              }
+              onDecode(result.data);
+            }
+          }
+        } catch (e) {}
+      }
+      requestAnimationFrame(loop);
+    }
+
+    function stop() {
+      stopped = true;
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    }
+
+    start();
+    const handle = { stop };
+    activeScanner = handle;
+    return handle;
+  }
+
+  function scannerCardHtml(idPrefix) {
+    return `
+      <div class="card scanner-card">
+        <div class="scanner-video-wrap">
+          <video id="${idPrefix}Video" playsinline muted autoplay></video>
+          <div class="scan-frame" id="${idPrefix}Frame"></div>
+        </div>
+        <div class="scanner-status" id="${idPrefix}Status">Starting camera…</div>
+      </div>
+    `;
+  }
+
+  function wireManualToggle(toggleId, wrapId, inputId) {
+    document.getElementById(toggleId).onclick = () => {
+      const wrap = document.getElementById(wrapId);
+      const showing = wrap.style.display !== 'none';
+      wrap.style.display = showing ? 'none' : 'block';
+      document.getElementById(toggleId).textContent = showing ? 'Enter code manually instead' : 'Hide manual entry';
+      if (!showing) document.getElementById(inputId).focus();
+    };
+  }
+
+  // ============================================================== LOGIN ====
+  async function renderLogin() {
+    let hubNames = [];
+    try { hubNames = await api('/auth/login-ids?role=volunteer'); } catch (e) { /* login form still renders; submit will surface the error */ }
+    document.getElementById('app').innerHTML = `
+      <div class="login-wrap"><img class="brand-watermark" src="vendor/brand-mark.svg" alt="" /><div class="card login-card">
+        <h1>${icon('ticket', 20)} Volunteer</h1>
+        <div class="sub">Choose your hub and enter its password to continue.</div>
+        <label>Hub</label>
+        <select id="loginHub">${hubNames.map(h => `<option value="${h.id}">${escapeHtml(h.name)}</option>`).join('')}</select>
+        <label>Password</label>
+        <input id="loginPass" type="password" />
+        <button class="btn btn-primary" id="loginBtn">Sign in</button>
+      </div></div>
+    `;
+    document.getElementById('loginBtn').onclick = async () => {
+      unlockAudio();
+      const id = document.getElementById('loginHub').value;
+      const secret = document.getElementById('loginPass').value;
+      try {
+        const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ id, secret }) });
+        token = data.token; user = data.user;
+        localStorage.setItem('volunteer_token', token);
+        localStorage.setItem('volunteer_user', JSON.stringify(user));
+        boot();
+      } catch (e) { showToast(e.message); }
+    };
+    document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginBtn').click(); });
+  }
+
+  function logout() {
+    stopActiveScanner();
+    localStorage.removeItem('volunteer_token'); localStorage.removeItem('volunteer_user');
+    token = null; user = null; batch = []; currentTicket = null; activeCheckinBusId = null;
+    renderLogin();
+  }
+
+  function renderShell(bodyHtml) {
+    document.getElementById('app').innerHTML = `
+      <header>
+        <div><div class="title">${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">Volunteer</div></div>
+        <button id="logoutBtn">Sign out</button>
+      </header>
+      <main>
+        <div class="tabs">
+          <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Ticket Allocation</div>
+          <div class="tab ${tab === 'reassign' ? 'active' : ''}" data-tab="reassign">Ticket Update</div>
+          <div class="tab ${tab === 'checkin' ? 'active' : ''}" data-tab="checkin">Check-in</div>
+        </div>
+        <div id="dynamicArea">${bodyHtml}</div>
+      </main>
+    `;
+    document.getElementById('logoutBtn').onclick = logout;
+    document.querySelectorAll('.tab').forEach(el => {
+      el.onclick = () => {
+        stopActiveScanner();
+        tab = el.dataset.tab;
+        renderCurrentTab();
+      };
+    });
+  }
+
+  // ======================================================== ALLOCATION ====
+  function renderAllocationTab() {
+    allocStep = 'scan';
+    selectedTimeslotId = null;
+    selectedStandby = false;
+    renderScanStep();
+  }
+
+  // ---- Step 1: scan everything, then explicitly move on ----
+  function renderScanStep() {
+    renderShell(`
+      ${scannerCardHtml('sell')}
+      <div class="card">
+        <div class="big-count" id="batchCount">0</div>
+        <div class="cap-label">ticket(s) scanned</div>
+      </div>
+      <button class="manual-toggle" id="manualToggle">Enter code manually instead</button>
+      <div id="manualWrap" style="display:none;">
+        <div class="card"><input id="scanInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
+      </div>
+      <div id="batchArea"></div>
+      <button class="btn btn-primary" id="nextBtn" disabled style="opacity:0.4;">Next ${icon('arrowRight', 15)}</button>
+    `);
+    wireManualToggle('manualToggle', 'manualWrap', 'scanInput');
+    document.getElementById('scanInput').addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const input = e.target;
+      await handleScan(input.value.trim());
+      input.value = '';
+      input.focus();
+    });
+    startCameraScanner(
+      document.getElementById('sellVideo'),
+      document.getElementById('sellStatus'),
+      document.getElementById('sellFrame'),
+      (code) => handleScan(code)
+    );
+    updateScanStepUi();
+  }
+
+  async function handleScan(code) {
+    if (!code) return;
+    if (batch.some(b => b.code === code)) {
+      feedback(false);
+      showToast('Already scanned in this batch');
+      return;
+    }
+    try {
+      const result = await api('/tickets/check', { method: 'POST', body: JSON.stringify({ code }) });
+      batch.push({ code, valid: result.valid, reason: result.reason || null });
+      feedback(result.valid);
+      if (!result.valid) showToast(`${code}: ${result.reason}`);
+      updateScanStepUi();
+    } catch (e) { feedback(false); showToast(e.message); }
+  }
+
+  function updateScanStepUi() {
+    const validCodes = batch.filter(b => b.valid).map(b => b.code);
+    document.getElementById('batchCount').textContent = validCodes.length;
+
+    const batchArea = document.getElementById('batchArea');
+    batchArea.innerHTML = batch.length ? `
+      <div class="card"><div class="batch-list">
+        ${batch.map((b, i) => `
+          <div class="batch-row ${b.valid ? '' : 'reject-row'}">
+            <span>${escapeHtml(b.code)}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
+            <button data-remove="${i}">${icon('close', 14)}</button>
+          </div>
+        `).join('')}
+      </div></div>
+    ` : '';
+    batchArea.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.onclick = () => { batch.splice(parseInt(btn.dataset.remove, 10), 1); updateScanStepUi(); };
+    });
+
+    const nextBtn = document.getElementById('nextBtn');
+    nextBtn.disabled = validCodes.length === 0;
+    nextBtn.style.opacity = validCodes.length === 0 ? '0.4' : '1';
+    nextBtn.onclick = () => {
+      if (validCodes.length === 0) return;
+      stopActiveScanner();
+      allocStep = 'select';
+      renderSelectStep();
+    };
+  }
+
+  // ---- Step 2: pick a time, then explicitly confirm ----
+  async function renderSelectStep() {
+    const validCodes = batch.filter(b => b.valid).map(b => b.code);
+    renderShell(`
+      <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Back to scanning</button>
+      <div class="card" style="text-align:center;">
+        <div class="big-count">${validCodes.length}</div>
+        <div class="cap-label">ticket(s) ready to sell</div>
+      </div>
+      <div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>
+      <button class="btn btn-primary" id="confirmBtn" disabled style="opacity:0.4; margin-top:4px;">Confirm Sale</button>
+    `);
+    document.getElementById('backBtn').onclick = () => {
+      selectedTimeslotId = null;
+      selectedStandby = false;
+      allocStep = 'scan';
+      renderScanStep();
+    };
+    document.getElementById('confirmBtn').onclick = () => {
+      if (selectedStandby) finalizeSale({ standby: true });
+      else if (selectedTimeslotId !== null) finalizeSale({ timeslotId: selectedTimeslotId });
+    };
+    await loadTimeslotsForSale(validCodes.length);
+  }
+
+  async function loadTimeslotsForSale(needed) {
+    try {
+      allocTimeslots = await api('/hubs/' + encodeURIComponent(user.hubId) + '/timeslots');
+      const card = document.getElementById('timeslotCard');
+      if (!card) return;
+      const usable = allocTimeslots.filter(t => t.available >= needed);
+
+      // No timeslot has room - offer Standby as a catch-all instead of just
+      // blocking the sale. Standby tickets aren't tied to a timeslot, so
+      // there's no capacity to be short on.
+      if (usable.length === 0) {
+        card.innerHTML = `<label>No timeslot has ${needed} seat(s) available right now</label>` + `
+          <div class="pill ${selectedStandby ? 'selected' : ''}" data-standby="1">
+            <div><div class="name">Standby Ticket</div><div class="meta">Not tied to a timeslot - always available</div></div>
+            <div>${selectedStandby ? icon('check', 16) : icon('arrowRight', 16)}</div>
+          </div>
+        `;
+        document.querySelector('[data-standby]').onclick = () => {
+          selectedStandby = true;
+          selectedTimeslotId = null;
+          const confirmBtn = document.getElementById('confirmBtn');
+          confirmBtn.disabled = false;
+          confirmBtn.style.opacity = '1';
+          loadTimeslotsForSale(needed);
+        };
+        return;
+      }
+
+      card.innerHTML = `<label>Tap a departure time (${needed} ticket${needed > 1 ? 's' : ''})</label>` +
+        usable.map(t => `
+          <div class="pill ${selectedTimeslotId === t.id ? 'selected' : ''}" data-slot="${t.id}">
+            <div><div class="name">${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
+            <div>${selectedTimeslotId === t.id ? icon('check', 16) : icon('arrowRight', 16)}</div>
+          </div>
+        `).join('');
+      document.querySelectorAll('[data-slot]').forEach(el => {
+        el.onclick = () => {
+          selectedTimeslotId = parseInt(el.dataset.slot, 10);
+          selectedStandby = false;
+          const confirmBtn = document.getElementById('confirmBtn');
+          confirmBtn.disabled = false;
+          confirmBtn.style.opacity = '1';
+          loadTimeslotsForSale(needed); // re-render so the selected pill highlights
+        };
+      });
+    } catch (e) { showToast(e.message); }
+  }
+
+  async function finalizeSale(selection) {
+    const validCodes = batch.filter(b => b.valid).map(b => b.code);
+    try {
+      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, codes: validCodes }) });
+      feedback(true);
+      if (result.rejected.length) {
+        showToast(`${result.sold.length} sold, ${result.rejected.length} rejected at the last moment`);
+      } else if (result.standby) {
+        showToast(`${result.sold.length} standby ticket(s) issued`, 'success');
+      } else {
+        showToast(`${result.sold.length} ticket(s) sold`, 'success');
+      }
+      batch = [];
+      selectedTimeslotId = null;
+      selectedStandby = false;
+      allocStep = 'scan';
+      renderScanStep(); // back to step 1, ready for the next customer
+    } catch (e) { showToast(e.message); }
+  }
+
+  // ========================================================== REASSIGN ====
+  function renderReassignTab() {
+    currentTicket = null;
+    selectedReassignSlotId = null;
+    renderLookupStep();
+  }
+
+  function renderLookupStep() {
+    currentTicket = null;
+    selectedReassignSlotId = null;
+    renderShell(`
+      ${scannerCardHtml('lookup')}
+      <button class="manual-toggle" id="manualToggle">Enter code manually instead</button>
+      <div id="manualWrap" style="display:none;">
+        <div class="card"><input id="lookupInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
+      </div>
+    `);
+    wireManualToggle('manualToggle', 'manualWrap', 'lookupInput');
+    document.getElementById('lookupInput').addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const code = e.target.value.trim();
+      e.target.value = '';
+      await handleLookup(code);
+    });
+    startCameraScanner(
+      document.getElementById('lookupVideo'),
+      document.getElementById('lookupStatus'),
+      document.getElementById('lookupFrame'),
+      (code) => handleLookup(code)
+    );
+  }
+
+  async function handleLookup(code) {
+    if (!code) return;
+    try {
+      const ticket = await api('/tickets/lookup?code=' + encodeURIComponent(code));
+      feedback(true);
+      stopActiveScanner();
+      currentTicket = ticket;
+      renderTicketStep();
+    } catch (e) {
+      feedback(false);
+      showToast(e.message);
+    }
+  }
+
+  async function renderTicketStep() {
+    const t = currentTicket;
+    let statusBlock = '';
+    let showPicker = true;
+
+    if (t.isStandby) {
+      statusBlock = '<div class="notice notice-warn">This is a standby ticket — pick a timeslot below to assign it one.</div>';
+    } else if (t.boarded) {
+      statusBlock = '<div class="notice notice-warn">This ticket has already boarded a bus and can no longer be switched.</div>';
+      showPicker = false;
+    } else {
+      statusBlock = `<div class="cap-label">Currently: ${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
+    }
+
+    renderShell(`
+      <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
+      <div class="card">
+        <div class="ticket-code">${escapeHtml(t.code)}</div>
+        ${statusBlock}
+      </div>
+      ${showPicker ? '<div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>' : ''}
+      ${showPicker ? `<button class="btn btn-primary" id="confirmSwitchBtn" disabled style="opacity:0.4;">${icon('swap', 15)} Switch Timeslot</button>` : ''}
+    `);
+    document.getElementById('backBtn').onclick = () => renderLookupStep();
+
+    if (showPicker) {
+      document.getElementById('confirmSwitchBtn').onclick = () => {
+        if (selectedReassignSlotId !== null) doReassign();
+      };
+      await loadTimeslotsForSwitch();
+    }
+  }
+
+  async function loadTimeslotsForSwitch() {
+    try {
+      reassignTimeslots = await api('/hubs/' + encodeURIComponent(currentTicket.hubId) + '/timeslots');
+      renderTimeslotOptions();
+    } catch (e) { showToast(e.message); }
+  }
+
+  function renderTimeslotOptions() {
+    const card = document.getElementById('timeslotCard');
+    if (!card) return;
+    const options = reassignTimeslots.filter(t => t.id !== currentTicket.timeslotId && t.available > 0);
+    if (options.length === 0) {
+      card.innerHTML = '<div class="empty">No other timeslots with open seats right now.</div>';
+      return;
+    }
+    card.innerHTML = `<label>Choose a new departure time</label>` + options.map(t => `
+      <div class="pill ${selectedReassignSlotId === t.id ? 'selected' : ''}" data-slot="${t.id}">
+        <div><div class="name">${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
+        <div>${icon('arrowRight', 16)}</div>
+      </div>
+    `).join('');
+    card.querySelectorAll('[data-slot]').forEach(el => {
+      el.onclick = () => {
+        selectedReassignSlotId = parseInt(el.dataset.slot, 10);
+        renderTimeslotOptions();
+        const btn = document.getElementById('confirmSwitchBtn');
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      };
+    });
+  }
+
+  async function doReassign() {
+    try {
+      const result = await api('/tickets/reassign', {
+        method: 'POST',
+        body: JSON.stringify({ code: currentTicket.code, timeslotId: selectedReassignSlotId }),
+      });
+      feedback(true);
+      showToast(`${result.code} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
+      renderLookupStep();
+    } catch (e) {
+      feedback(false);
+      showToast(e.message);
+    }
+  }
+
+  // ========================================================== CHECK-IN ====
+  async function renderCheckinTab() {
+    renderShell(`<div class="card"><div class="empty">Loading buses…</div></div>`);
+    try {
+      checkinBuses = await api('/buses?leg=hub_to_central');
+    } catch (e) { showToast(e.message); return; }
+
+    if (checkinBuses.length === 0) {
+      activeCheckinBusId = null;
+      renderShell(`<div class="card"><div class="empty">No buses have been set up for this hub yet. Ask your admin to add one.</div></div>`);
+      return;
+    }
+    if (activeCheckinBusId === null || !checkinBuses.some(b => b.id === activeCheckinBusId)) {
+      const open = checkinBuses.find(b => b.status !== 'departed');
+      activeCheckinBusId = (open || checkinBuses[0]).id;
+    }
+    renderCheckinBoardingScreen();
+  }
+
+  function renderCheckinBoardingScreen() {
+    const bus = checkinBuses.find(b => b.id === activeCheckinBusId);
+    renderShell(`
+      <label>Bus</label>
+      <select id="checkinBusSelect">
+        ${checkinBuses.map(b => `<option value="${b.id}" ${b.id === activeCheckinBusId ? 'selected' : ''}>${escapeHtml(b.label)} (${b.status})</option>`).join('')}
+      </select>
+      <div class="card">
+        <div class="big-count" id="onboardCount">${bus.onboard}<span class="of"> / ${bus.capacity}</span></div>
+        <div class="cap-label">${escapeHtml(bus.label)} · <span class="bus-status status-${bus.status}">${bus.status}</span></div>
+      </div>
+      ${bus.status !== 'departed' ? scannerCardHtml('board') : ''}
+      ${bus.status !== 'departed' ? `
+        <button class="manual-toggle" id="manualToggle">Enter code manually instead</button>
+        <div id="manualWrap" style="display:none;">
+          <div class="card"><input id="boardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
+        </div>
+      ` : '<div class="card"><div class="empty">This bus has departed.</div></div>'}
+      ${bus.status !== 'departed' ? `<button class="btn btn-danger" id="departBtn">Complete &amp; Depart</button>` : ''}
+    `);
+
+    document.getElementById('checkinBusSelect').onchange = (e) => {
+      stopActiveScanner();
+      activeCheckinBusId = parseInt(e.target.value, 10);
+      renderCheckinBoardingScreen();
+    };
+
+    if (bus.status !== 'departed') {
+      wireManualToggle('manualToggle', 'manualWrap', 'boardInput');
+      document.getElementById('boardInput').addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        const input = e.target;
+        await handleCheckinBoard(input.value.trim());
+        input.value = '';
+        input.focus();
+      });
+      startCameraScanner(
+        document.getElementById('boardVideo'),
+        document.getElementById('boardStatus'),
+        document.getElementById('boardFrame'),
+        (code) => handleCheckinBoard(code)
+      );
+    }
+
+    const departBtn = document.getElementById('departBtn');
+    if (departBtn) departBtn.onclick = async () => {
+      if (!confirm('Mark this bus as departed? No more check-ins will be allowed after this.')) return;
+      try {
+        stopActiveScanner();
+        const updated = await api(`/buses/${activeCheckinBusId}/depart`, { method: 'POST' });
+        checkinBuses = checkinBuses.map(b => (b.id === activeCheckinBusId ? updated : b));
+        feedback(true);
+        renderCheckinBoardingScreen();
+      } catch (e) { showToast(e.message); }
+    };
+  }
+
+  async function handleCheckinBoard(code) {
+    if (!code) return;
+    try {
+      const updated = await api(`/buses/${activeCheckinBusId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
+      checkinBuses = checkinBuses.map(b => (b.id === activeCheckinBusId ? updated : b));
+      feedback(true);
+      document.getElementById('onboardCount').innerHTML = `${updated.onboard}<span class="of"> / ${updated.capacity}</span>`;
+      if (updated.issuedStandby) {
+        showToast(`${code} — new standby ticket issued & checked in`, 'success');
+      } else {
+        showToast(`${code} checked in`, 'success');
+      }
+    } catch (e) {
+      feedback(false);
+      showToast(e.message);
+    }
+  }
+
+  function renderCurrentTab() {
+    if (tab === 'allocation') renderAllocationTab();
+    else if (tab === 'reassign') renderReassignTab();
+    else renderCheckinTab();
+  }
+
+  function boot() {
+    if (!token || !user) { renderLogin(); return; }
+    renderCurrentTab();
+  }
+  boot();
+</script>
+</body>
+</html>

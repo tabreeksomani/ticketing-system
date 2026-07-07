@@ -1,0 +1,26 @@
+{
+  "admin": {
+    "password": "ChangeThisAdminPassword123"
+  },
+  "hubs": [
+    {
+      "name": "Surrey",
+      "travelMinutes": 45,
+      "volunteerPassword": "ChangeThisSurreyPassword123",
+      "timeslots": [
+        { "departureTime": "2026-07-06T18:00:00", "capacity": 50 },
+        { "departureTime": "2026-07-06T19:00:00", "capacity": 50 },
+        { "departureTime": "2026-07-06T20:00:00", "capacity": 30 }
+      ]
+    },
+    {
+      "name": "Abbotsford",
+      "travelMinutes": 60,
+      "volunteerPassword": "ChangeThisAbbotsfordPassword123",
+      "timeslots": [
+        { "departureTime": "2026-07-06T18:30:00", "capacity": 40 },
+        { "departureTime": "2026-07-06T19:30:00", "capacity": 40 }
+      ]
+    }
+  ]
+}

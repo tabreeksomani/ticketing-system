@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --yes localtunnel --port 8000)",
+      "Read(//c/Users/tabre/AppData/Local/Temp/claude/**)",
+      "Bash(curl -s -o /dev/null -w \"tunnel health check: %{http_code}\\\\n\" https://yellow-birds-stop.loca.lt/api/health)"
+    ]
+  }
+}

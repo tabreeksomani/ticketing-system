@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<title>Mulaqat Express System</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #FFFFFF; color: #241C10; font-family: 'Segoe UI', system-ui, sans-serif; display: flex; align-items: center; justify-content: center; padding: 20px; position: relative; overflow: hidden; }
+  .brand-watermark { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 460px; max-width: 160%; opacity: 0.14; pointer-events: none; z-index: 0; }
+  .wrap { max-width: 380px; width: 100%; position: relative; z-index: 1; }
+  h1 { font-size: 20px; text-align: center; margin-bottom: 24px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
+  a.card { display: block; background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 14px; padding: 18px; margin-bottom: 12px; text-decoration: none; color: #241C10; border-left: 3px solid #8C734C; transition: border-color 0.15s; box-shadow: 0 1px 3px rgba(140,115,76,0.08); }
+  a.card:hover { border-left-color: #6b5636; }
+  a.card .name { font-weight: 700; font-size: 15px; }
+  a.card .desc { font-size: 12px; color: #756c5a; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <img class="brand-watermark" src="vendor/brand-mark.svg" alt="" />
+  <div class="wrap">
+    <h1><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-4px;margin-right:4px;"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z"/><path d="M13 5v2M13 11v2M13 17v2"/></svg>Mulaqat Express System</h1>
+    <a class="card" href="volunteer.html"><div class="name">Volunteer</div><div class="desc">Sell tickets and update/reassign timeslots at your hub</div></a>
+    <a class="card" href="admin.html"><div class="name">Admin</div><div class="desc">Live dashboards</div></a>
+  </div>
+</body>
+</html>
