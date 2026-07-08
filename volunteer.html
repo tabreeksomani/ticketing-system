@@ -60,7 +60,7 @@
   .scanner-video-wrap { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; overflow: hidden; }
   .scanner-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
   .scan-frame { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 62%; aspect-ratio: 1; border: 3px solid rgba(140,115,76,0.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0,0,0,0.35); pointer-events: none; }
-  .scan-frame.flash { border-color: #22c55e; }
+  .scan-frame.flash { border-color: #22c55e; border-width: 3px; }
   .scanner-status { padding: 10px 14px; font-size: 12px; color: #756c5a; text-align: center; background: #FFFFFF; }
   .scanner-status.warn { color: #B91C1C; }
   .manual-toggle { background: none; border: none; color: #8C734C; font-size: 13px; text-align: center; width: 100%; padding: 10px 0; cursor: pointer; text-decoration: underline; }
@@ -210,9 +210,10 @@
       }
     }
 
+    let paused = false;
     function loop() {
       if (stopped) return;
-      if (videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
+      if (!paused && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
         canvas.width = videoEl.videoWidth;
         canvas.height = videoEl.videoHeight;
         ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
@@ -225,7 +226,18 @@
               recent.set(result.data, now);
               if (frameEl) {
                 frameEl.classList.add('flash');
-                setTimeout(() => frameEl.classList.remove('flash'), 300);
+                // Let the flash register for a beat before freezing, then hold
+                // the "captured" snapshot for the rest of the flash.
+                setTimeout(() => {
+                  if (stopped) return;
+                  paused = true;
+                  videoEl.pause();
+                }, 500);
+                setTimeout(() => {
+                  frameEl.classList.remove('flash');
+                  paused = false;
+                  if (!stopped) videoEl.play().catch(() => {});
+                }, 1000);
               }
               onDecode(result.data);
             }
@@ -382,6 +394,14 @@
     if (batch.some(b => b.code === code)) {
       feedback(false);
       showToast('Already scanned in this batch');
+      return;
+    }
+    // Testers are just exercising the flow - skip the backend validation call
+    // and accept the code as-is so nothing hits the server.
+    if (user.role === 'tester') {
+      batch.push({ code, valid: true, reason: null });
+      feedback(true);
+      updateScanStepUi();
       return;
     }
     try {
