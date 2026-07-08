@@ -9,6 +9,7 @@
   html, body { margin: 0; padding: 0; min-height: 100vh; background: #FFFFFF; color: #241C10; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
   header { position: sticky; top: 0; z-index: 5; background: #FFFFFF; border-bottom: 1px solid #E8E1D3; padding: max(16px, env(safe-area-inset-top)) 16px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   header .title { font-weight: 800; font-size: 16px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
+  header .sub { font-size: 11px; color: #756c5a; }
   header button { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
   main { padding: 16px; max-width: 900px; margin: 0 auto; padding-bottom: 50px; }
   .tabs { display: flex; gap: 6px; margin-bottom: 18px; overflow-x: auto; }
@@ -215,7 +216,7 @@
   function renderAppShell() {
     document.getElementById('app').innerHTML = `
       <header>
-        <div class="title">${icon('ticket', 18)} Admin</div>
+        <div><div class="title">${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
         <button id="logoutBtn">Sign out</button>
       </header>
       <main>

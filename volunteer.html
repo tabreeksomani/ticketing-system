@@ -308,7 +308,7 @@
   function renderShell(bodyHtml) {
     document.getElementById('app').innerHTML = `
       <header>
-        <div><div class="title">${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">Volunteer</div></div>
+        <div><div class="title">${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
         <button id="logoutBtn">Sign out</button>
       </header>
       <main>
