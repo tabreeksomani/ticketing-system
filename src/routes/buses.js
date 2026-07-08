@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { requireAuth, requireRole, requireOwnHub } = require('../auth');
 const { jsonError, asyncHandler } = require('../errors');
+const { normalizeCode } = require('../util');
 
 const router = express.Router();
 
@@ -168,7 +169,7 @@ router.post('/buses/:id(\\d+)/board', asyncHandler(async (req, res) => {
     jsonError('Bus is at full capacity', 409);
   }
 
-  const code = String(req.body.code || '').trim();
+  const code = normalizeCode(req.body.code);
   if (code === '') {
     jsonError('code is required', 400);
   }

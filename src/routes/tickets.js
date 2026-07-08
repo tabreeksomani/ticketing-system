@@ -2,13 +2,14 @@ const express = require('express');
 const { pool } = require('../db');
 const { requireRole } = require('../auth');
 const { jsonError, asyncHandler } = require('../errors');
+const { normalizeCode } = require('../util');
 
 const router = express.Router();
 
 // Quick check while scanning, before the sale is finalized. Doesn't write anything.
 router.post('/tickets/check', asyncHandler(async (req, res) => {
   await requireRole(req, ['volunteer']);
-  const code = String(req.body.code || '').trim();
+  const code = normalizeCode(req.body.code);
   if (code === '') {
     jsonError('code is required', 400);
   }
@@ -38,7 +39,7 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
   const user = await requireRole(req, ['volunteer']);
   const standby = req.body.standby === true;
   const timeslotId = req.body.timeslotId !== undefined ? parseInt(req.body.timeslotId, 10) : null;
-  const codes = [...new Set((req.body.codes || []).map((c) => String(c).trim()).filter((c) => c !== ''))];
+  const codes = [...new Set((req.body.codes || []).map((c) => normalizeCode(c)).filter((c) => c !== ''))];
   if ((!standby && !timeslotId) || codes.length === 0) {
     jsonError('timeslotId (or standby) and at least one code are required', 400);
   }
@@ -103,7 +104,7 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
 // Looks up a ticket's current status, for the ticket update/reassignment page.
 router.get('/tickets/lookup', asyncHandler(async (req, res) => {
   const user = await requireRole(req, ['volunteer', 'admin']);
-  const code = String(req.query.code || '').trim();
+  const code = normalizeCode(req.query.code);
   if (code === '') {
     jsonError('code is required', 400);
   }
@@ -143,7 +144,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
 // both squeeze into the same last open seat.
 router.post('/tickets/reassign', asyncHandler(async (req, res) => {
   const user = await requireRole(req, ['volunteer', 'admin']);
-  const code = String(req.body.code || '').trim();
+  const code = normalizeCode(req.body.code);
   const newTimeslotId = req.body.timeslotId !== undefined ? parseInt(req.body.timeslotId, 10) : null;
   if (code === '' || !newTimeslotId) {
     jsonError('code and timeslotId are required', 400);

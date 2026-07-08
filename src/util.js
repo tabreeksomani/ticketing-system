@@ -14,4 +14,16 @@ function safeEquals(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-module.exports = { safeEquals };
+// Normalizes a scanned/typed ticket code down to its bare number by dropping
+// the "MQEBC" prefix and zero padding (e.g. "MQEBC00042" -> "42"). This is the
+// canonical form the app stores and compares on, so a full printed code and its
+// bare number resolve to the same ticket. Anything without the expected prefix
+// is passed through untouched (already trimmed by the caller).
+function normalizeCode(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!/^MQEBC/i.test(s)) return s;
+  const rest = s.slice(5).replace(/^0+/, '');
+  return rest || '0';
+}
+
+module.exports = { safeEquals, normalizeCode };

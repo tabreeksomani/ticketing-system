@@ -104,6 +104,18 @@
     return typeof code === 'string' && code.startsWith('MQEBC');
   }
 
+  // Canonical ticket number: strips the "MQEBC" prefix and zero padding
+  // (e.g. "MQEBC00042" -> "42"). This is applied both to what the volunteer
+  // sees AND to the code the moment it's scanned/typed, so the bare number is
+  // what gets held in state and sent to the backend. Anything without the
+  // expected prefix is passed through verbatim. Mirrors normalizeCode() on the
+  // server, which normalizes again defensively.
+  function formatTicketCode(code) {
+    if (typeof code !== 'string' || !/^MQEBC/i.test(code)) return code;
+    const rest = code.slice(5).replace(/^0+/, '');
+    return rest || '0';
+  }
+
   // departureTime is stored as free-form text (whatever was typed in via psql
   // when the timeslot was created), always meant as Pacific Time wall-clock -
   // this prettifies it for display. Parsed manually (not via `new Date(raw)`)
@@ -379,18 +391,22 @@
       document.getElementById('sellVideo'),
       document.getElementById('sellStatus'),
       document.getElementById('sellFrame'),
-      (code) => handleScan(code)
+      (code) => handleScan(code, true)
     );
     updateScanStepUi();
   }
 
-  async function handleScan(code) {
+  async function handleScan(code, fromCamera) {
     if (!code) return;
-    if (!isValidTicketCode(code)) {
+    // The MQEBC prefix check only exists to keep the live camera loop from
+    // firing on random environmental QR codes. Manual entry is deliberate, so
+    // it bypasses this guard.
+    if (fromCamera && !isValidTicketCode(code)) {
       feedback(false);
       showToast('Not a valid ticket code');
       return;
     }
+    code = formatTicketCode(code); // canonical bare number from here on
     if (batch.some(b => b.code === code)) {
       feedback(false);
       showToast('Already scanned in this batch');
@@ -406,9 +422,15 @@
     }
     try {
       const result = await api('/tickets/check', { method: 'POST', body: JSON.stringify({ code }) });
-      batch.push({ code, valid: result.valid, reason: result.reason || null });
-      feedback(result.valid);
-      if (!result.valid) showToast(`${code}: ${result.reason}`);
+      // An invalid (e.g. already-sold) code isn't added to the batch at all -
+      // just surface the reason and move on.
+      if (!result.valid) {
+        feedback(false);
+        showToast(`${formatTicketCode(code)}: ${result.reason}`);
+        return;
+      }
+      batch.push({ code, valid: true, reason: null });
+      feedback(true);
       updateScanStepUi();
     } catch (e) { feedback(false); showToast(e.message); }
   }
@@ -422,7 +444,7 @@
       <div class="card"><div class="batch-list">
         ${batch.map((b, i) => `
           <div class="batch-row ${b.valid ? '' : 'reject-row'}">
-            <span>${escapeHtml(b.code)}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
+            <span>${escapeHtml(formatTicketCode(b.code))}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
             <button data-remove="${i}">${icon('close', 14)}</button>
           </div>
         `).join('')}
@@ -564,17 +586,19 @@
       document.getElementById('lookupVideo'),
       document.getElementById('lookupStatus'),
       document.getElementById('lookupFrame'),
-      (code) => handleLookup(code)
+      (code) => handleLookup(code, true)
     );
   }
 
-  async function handleLookup(code) {
+  async function handleLookup(code, fromCamera) {
     if (!code) return;
-    if (!isValidTicketCode(code)) {
+    // Prefix guard is camera-only (see handleScan); manual lookup bypasses it.
+    if (fromCamera && !isValidTicketCode(code)) {
       feedback(false);
       showToast('Not a valid ticket code');
       return;
     }
+    code = formatTicketCode(code); // canonical bare number from here on
     try {
       const ticket = await api('/tickets/lookup?code=' + encodeURIComponent(code));
       feedback(true);
@@ -604,7 +628,7 @@
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
-        <div class="ticket-code">${escapeHtml(t.code)}</div>
+        <div class="ticket-code">${escapeHtml(formatTicketCode(t.code))}</div>
         ${statusBlock}
       </div>
       ${showPicker ? '<div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>' : ''}
@@ -659,7 +683,7 @@
         body: JSON.stringify({ code: currentTicket.code, timeslotId: selectedReassignSlotId }),
       });
       feedback(true);
-      showToast(`${result.code} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
+      showToast(`${formatTicketCode(result.code)} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
       renderLookupStep();
     } catch (e) {
       feedback(false);
@@ -726,7 +750,7 @@
         document.getElementById('boardVideo'),
         document.getElementById('boardStatus'),
         document.getElementById('boardFrame'),
-        (code) => handleCheckinBoard(code)
+        (code) => handleCheckinBoard(code, true)
       );
     }
 
@@ -743,22 +767,24 @@
     };
   }
 
-  async function handleCheckinBoard(code) {
+  async function handleCheckinBoard(code, fromCamera) {
     if (!code) return;
-    if (!isValidTicketCode(code)) {
+    // Prefix guard is camera-only (see handleScan); manual entry bypasses it.
+    if (fromCamera && !isValidTicketCode(code)) {
       feedback(false);
       showToast('Not a valid ticket code');
       return;
     }
+    code = formatTicketCode(code); // canonical bare number from here on
     try {
       const updated = await api(`/buses/${activeCheckinBusId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
       checkinBuses = checkinBuses.map(b => (b.id === activeCheckinBusId ? updated : b));
       feedback(true);
       document.getElementById('onboardCount').innerHTML = `${updated.onboard}<span class="of"> / ${updated.capacity}</span>`;
       if (updated.issuedStandby) {
-        showToast(`${code} — new standby ticket issued & checked in`, 'success');
+        showToast(`${formatTicketCode(code)} — new standby ticket issued & checked in`, 'success');
       } else {
-        showToast(`${code} checked in`, 'success');
+        showToast(`${formatTicketCode(code)} checked in`, 'success');
       }
     } catch (e) {
       feedback(false);
