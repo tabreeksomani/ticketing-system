@@ -131,6 +131,39 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
   });
 }));
 
+// Read-only lookup for the View Ticket tab: any volunteer (or admin) can look
+// up any allocated ticket, regardless of which hub sold it - unlike
+// /tickets/lookup (used by Ticket Update/Reassignment), there's no hub-match
+// check here, since this is just "what hub/time is this ticket for," not an
+// action that needs to be scoped to the caller's own hub.
+router.get('/tickets/view', asyncHandler(async (req, res) => {
+  await requireRole(req, ['volunteer', 'admin']);
+  const code = normalizeCode(req.query.code);
+  if (code === '') {
+    jsonError('code is required', 400);
+  }
+  const { rows } = await pool.query(
+    `SELECT t.*, ts.departure_time, h.name AS hub_name
+     FROM tickets t
+     LEFT JOIN timeslots ts ON t.timeslot_id = ts.id
+     JOIN hubs h ON t.hub_id = h.id
+     WHERE t.code = $1`,
+    [code]
+  );
+  const ticket = rows[0];
+  if (!ticket) {
+    jsonError('This ticket has not been allocated', 404);
+  }
+  res.json({
+    code: ticket.code,
+    hubId: ticket.hub_id,
+    hubName: ticket.hub_name,
+    departureTime: ticket.departure_time,
+    isStandby: ticket.is_standby,
+    boarded: ticket.leg1_bus_id !== null,
+  });
+}));
+
 // Moves a ticket to a different timeslot at the same hub, releasing its seat
 // in the original timeslot (capacity is always computed live from ticket
 // counts, so simply changing timeslot_id is the whole "release" operation).

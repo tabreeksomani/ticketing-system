@@ -86,6 +86,9 @@
   let reassignTimeslots = [];
   let selectedReassignSlotId = null;
 
+  // ---- View Ticket state ----
+  let viewedTicket = null;
+
   // ---- Ticket Check-in Scan state ----
   let checkinBuses = [];
   let activeCheckinBusId = null;
@@ -325,7 +328,7 @@
   function logout() {
     stopActiveScanner();
     localStorage.removeItem('volunteer_token'); localStorage.removeItem('volunteer_user');
-    token = null; user = null; batch = []; currentTicket = null; activeCheckinBusId = null;
+    token = null; user = null; batch = []; currentTicket = null; viewedTicket = null; activeCheckinBusId = null;
     renderLogin();
   }
 
@@ -337,8 +340,9 @@
       </header>
       <main>
         <div class="tabs">
-          <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Ticket Allocation</div>
-          <div class="tab ${tab === 'reassign' ? 'active' : ''}" data-tab="reassign">Ticket Update</div>
+          <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Allocate Ticket</div>
+          <div class="tab ${tab === 'view' ? 'active' : ''}" data-tab="view">View Ticket</div>
+          <div class="tab ${tab === 'reassign' ? 'active' : ''}" data-tab="reassign">Update Ticket</div>
           <!-- Check-in Scan tab hidden for now - uncomment to bring it back:
           <div class="tab ${tab === 'checkin' ? 'active' : ''}" data-tab="checkin">Check-in</div>
           -->
@@ -691,6 +695,78 @@
     }
   }
 
+  // ======================================================= VIEW TICKET ====
+  // Read-only: unlike Update Ticket (reassignment), this isn't scoped to the
+  // volunteer's own hub - it's just "what hub/time is this ticket for,"
+  // useful for answering a question about any ticket in the system.
+  function renderViewTab() {
+    viewedTicket = null;
+    renderViewLookupStep();
+  }
+
+  function renderViewLookupStep() {
+    viewedTicket = null;
+    renderShell(`
+      ${scannerCardHtml('view')}
+      <button class="manual-toggle" id="manualToggle">Enter code manually instead</button>
+      <div id="manualWrap" style="display:none;">
+        <div class="card"><input id="viewInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
+      </div>
+    `);
+    wireManualToggle('manualToggle', 'manualWrap', 'viewInput');
+    document.getElementById('viewInput').addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const code = e.target.value.trim();
+      e.target.value = '';
+      await handleView(code);
+    });
+    startCameraScanner(
+      document.getElementById('viewVideo'),
+      document.getElementById('viewStatus'),
+      document.getElementById('viewFrame'),
+      (code) => handleView(code)
+    );
+  }
+
+  async function handleView(code) {
+    if (!code) return;
+    if (!isValidTicketCode(code)) {
+      feedback(false);
+      showToast('Not a valid ticket code');
+      return;
+    }
+    try {
+      const ticket = await api('/tickets/view?code=' + encodeURIComponent(code));
+      feedback(true);
+      stopActiveScanner();
+      viewedTicket = ticket;
+      renderViewResultStep();
+    } catch (e) {
+      feedback(false);
+      showToast(e.message);
+    }
+  }
+
+  function renderViewResultStep() {
+    const t = viewedTicket;
+    let statusBlock = '';
+    if (t.isStandby) {
+      statusBlock = '<div class="notice notice-warn">This is a standby ticket - not tied to a timeslot.</div>';
+    } else {
+      statusBlock = `<div class="cap-label">${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
+    }
+    renderShell(`
+      <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
+      <div class="card">
+        <div class="ticket-code">${escapeHtml(t.code)}</div>
+        <div class="cap-label" style="margin-top:8px;">${escapeHtml(t.hubName)}</div>
+        ${statusBlock}
+        ${t.boarded ? '<div class="notice notice-warn">This ticket has already boarded a bus.</div>' : ''}
+      </div>
+    `);
+    document.getElementById('backBtn').onclick = () => renderViewLookupStep();
+  }
+
   // ========================================================== CHECK-IN ====
   async function renderCheckinTab() {
     renderShell(`<div class="card"><div class="empty">Loading buses…</div></div>`);
@@ -795,6 +871,7 @@
   function renderCurrentTab() {
     if (tab === 'allocation') renderAllocationTab();
     else if (tab === 'reassign') renderReassignTab();
+    else if (tab === 'view') renderViewTab();
     else renderCheckinTab();
   }
 
