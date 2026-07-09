@@ -11,6 +11,7 @@
   header { position: sticky; top: 0; z-index: 5; background: #FFFFFF; border-bottom: 1px solid #E8E1D3; padding: max(14px, env(safe-area-inset-top)) 16px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   header .title { font-weight: 800; font-size: 16px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
   header .sub { font-size: 11px; color: #756c5a; }
+  .not-live { display: inline-block; background: #C62828; color: #FFFFFF; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; padding: 2px 6px; border-radius: 5px; margin-right: 6px; vertical-align: middle; }
   header button, header #homeBtn { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 9px 12px; cursor: pointer; min-height: 40px; }
   header #homeBtn { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
   main { padding: 14px; max-width: 480px; margin: 0 auto; padding-bottom: 40px; }
@@ -328,7 +329,7 @@
     document.getElementById('app').innerHTML = `
       <div class="login-screen">
       <header>
-        <div class="title">${icon('ticket', 18)} Ticketing</div>
+        <div class="title"><span class="not-live">NOT LIVE</span>${icon('ticket', 18)} Ticketing</div>
         <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
       </header>
       <div class="login-wrap"><img class="brand-watermark" src="vendor/brand-mark.svg" alt="" /><div class="card login-card">
@@ -370,7 +371,7 @@
     const showHubBar = user.hubs && user.hubs.length > 1;
     document.getElementById('app').innerHTML = `
       <header>
-        <div><div class="title">${icon('ticket', 18)} Ticketing - ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
+        <div><div class="title"><span class="not-live">NOT LIVE</span>${icon('ticket', 18)} Ticketing - ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
         <div style="display:flex;gap:8px;">
           <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
           <button id="logoutBtn">Sign out</button>
