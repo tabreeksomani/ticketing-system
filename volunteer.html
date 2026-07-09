@@ -133,16 +133,35 @@
     return typeof code === 'string' && code.startsWith('MQEBC');
   }
 
+  // A demo'ers device gets one random prefix, generated the first time it's
+  // needed and kept in localStorage so it stays stable for this browser but
+  // distinct from every other demo'ers. It lets demo'ers exercise the scan flow
+  // with codes that can't collide with each other or with real ticket numbers.
+  // The trailing "-" is also what keeps formatTicketCode idempotent (below).
+  function demoPrefix() {
+    let p = localStorage.getItem('demo_prefix');
+    if (!p) {
+      const bytes = crypto.getRandomValues(new Uint8Array(4));
+      p = 'T' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') + '-';
+      localStorage.setItem('demo_prefix', p);
+    }
+    return p;
+  }
+
   // Canonical ticket number: strips the "MQEBC" prefix and zero padding
   // (e.g. "MQEBC00042" -> "42"). This is applied both to what the volunteer
   // sees AND to the code the moment it's scanned/typed, so the bare number is
   // what gets held in state and sent to the backend. Anything without the
   // expected prefix is passed through verbatim. Mirrors normalizeCode() on the
   // server, which normalizes again defensively.
-  function formatTicketCode(code) {
-    if (typeof code !== 'string' || !/^MQEBC/i.test(code)) return code;
-    const rest = code.slice(5).replace(/^0+/, '');
-    return rest || '0';
+  //
+  // For demo'ers the canonical code is that bare number with a browser-specific
+  // prefix, isolating their test tickets.
+  function formatTicketCode(code, user) {
+    if (typeof code !== 'string') return code;
+    const bare = /^MQEBC/i.test(code) ? code.slice(5).replace(/^0+/, '') || '0' : code;
+    if (user && user.id === 'demo') return demoPrefix() + bare;
+    return bare;
   }
 
   // departureTime is stored as free-form text (whatever was typed in via psql
@@ -465,7 +484,7 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code); // canonical bare number from here on
+    code = formatTicketCode(code, user); // canonical bare number from here on
     if (batch.some(b => b.code === code)) {
       feedback(false);
       showToast('Already scanned in this batch');
@@ -485,7 +504,7 @@
       // just surface the reason and move on.
       if (!result.valid) {
         feedback(false);
-        showToast(`${formatTicketCode(code)}: ${result.reason}`);
+        showToast(`${formatTicketCode(code, user)}: ${result.reason}`);
         return;
       }
       batch.push({ code, valid: true, reason: null });
@@ -503,7 +522,7 @@
       <div class="card"><div class="batch-list">
         ${batch.map((b, i) => `
           <div class="batch-row ${b.valid ? '' : 'reject-row'}">
-            <span>${escapeHtml(formatTicketCode(b.code))}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
+            <span>${escapeHtml(formatTicketCode(b.code, user))}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
             <button data-remove="${i}">${icon('close', 14)}</button>
           </div>
         `).join('')}
@@ -657,7 +676,7 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code); // canonical bare number from here on
+    code = formatTicketCode(code, user); // canonical bare number from here on
     try {
       const ticket = await api('/tickets/lookup?code=' + encodeURIComponent(code));
       feedback(true);
@@ -691,7 +710,7 @@
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
-        <div class="ticket-code">${escapeHtml(formatTicketCode(t.code))}</div>
+        <div class="ticket-code">${escapeHtml(formatTicketCode(t.code, user))}</div>
         ${statusBlock}
       </div>
       ${showPicker ? '<div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>' : ''}
@@ -746,7 +765,7 @@
         body: JSON.stringify({ code: currentTicket.code, timeslotId: selectedReassignSlotId }),
       });
       feedback(true);
-      showToast(`${formatTicketCode(result.code)} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
+      showToast(`${formatTicketCode(result.code, user)} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
       renderLookupStep();
     } catch (e) {
       feedback(false);
@@ -795,7 +814,7 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code); // canonical bare number from here on
+    code = formatTicketCode(code, user); // canonical bare number from here on
     try {
       const ticket = await api('/tickets/view?code=' + encodeURIComponent(code));
       feedback(true);
@@ -1001,16 +1020,16 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code); // canonical bare number from here on
+    code = formatTicketCode(code, user); // canonical bare number from here on
     try {
       const updated = await api(`/trips/${activeCheckinTripId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
       checkinTrips = checkinTrips.map(t => (t.id === activeCheckinTripId ? updated : t));
       feedback(true);
       document.getElementById('onboardCount').textContent = updated.onboard;
       if (updated.issuedStandby) {
-        showToast(`${formatTicketCode(code)} — new standby ticket issued & checked in`, 'success');
+        showToast(`${formatTicketCode(code, user)} — new standby ticket issued & checked in`, 'success');
       } else {
-        showToast(`${formatTicketCode(code)} checked in`, 'success');
+        showToast(`${formatTicketCode(code, user)} checked in`, 'success');
       }
     } catch (e) {
       feedback(false);
