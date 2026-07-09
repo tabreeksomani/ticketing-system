@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
-<title>Volunteer — Ticketing</title>
+<title>Ticketing</title>
 <script src="vendor/jsQR.js"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -328,11 +328,11 @@
     document.getElementById('app').innerHTML = `
       <div class="login-screen">
       <header>
-        <div class="title">${icon('ticket', 18)} Volunteer</div>
+        <div class="title">${icon('ticket', 18)} Ticketing</div>
         <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
       </header>
       <div class="login-wrap"><img class="brand-watermark" src="vendor/brand-mark.svg" alt="" /><div class="card login-card">
-        <h1>${icon('ticket', 20)} Volunteer</h1>
+        <h1>${icon('ticket', 20)} Ticketing</h1>
         <div class="sub">Choose your login and enter its password to continue.</div>
         <label>Login</label>
         <select id="loginHub">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.id)}</option>`).join('')}</select>
@@ -370,7 +370,7 @@
     const showHubBar = user.hubs && user.hubs.length > 1;
     document.getElementById('app').innerHTML = `
       <header>
-        <div><div class="title">${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
+        <div><div class="title">${icon('ticket', 18)} Ticketing - ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
         <div style="display:flex;gap:8px;">
           <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
           <button id="logoutBtn">Sign out</button>
