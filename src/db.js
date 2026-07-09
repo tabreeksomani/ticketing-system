@@ -5,6 +5,14 @@ const pool = new Pool({
   // Azure Database for PostgreSQL requires SSL; local Postgres doesn't offer it
   // by default, so this stays opt-in via env var rather than always-on.
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+  max: process.env.DATABASE_POOL_MAX ? parseInt(process.env.DATABASE_POOL_MAX, 10) : 10,
+  min: process.env.DATABASE_POOL_MIN ? parseInt(process.env.DATABASE_POOL_MIN, 10) : 4,
+  idleTimeoutMillis: process.env.DATABASE_POOL_IDLE_TIMEOUT_MS ? parseInt(process.env.DATABASE_POOL_IDLE_TIMEOUT_MS, 10) : 30000,
+  connectionTimeoutMillis: process.env.DATABASE_POOL_CONNECTION_TIMEOUT_MS ? parseInt(process.env.DATABASE_POOL_CONNECTION_TIMEOUT_MS, 10) : 10000,
+  maxUses: process.env.DATABASE_POOL_MAX_USES ? parseInt(process.env.DATABASE_POOL_MAX_USES, 10) : undefined,
+  statement_timeout: process.env.DATABASE_STATEMENT_TIMEOUT_MS ? parseInt(process.env.DATABASE_STATEMENT_TIMEOUT_MS, 10) : 60000,
+  lock_timeout: process.env.DATABASE_LOCK_TIMEOUT_MS ? parseInt(process.env.DATABASE_LOCK_TIMEOUT_MS, 10) : 10000,
+  idle_in_transaction_session_timeout: process.env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS ? parseInt(process.env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS, 10) : 30000,
 });
 
 let initPromise = null;
