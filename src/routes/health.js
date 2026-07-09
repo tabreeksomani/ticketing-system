@@ -72,9 +72,7 @@ async function performHealthCheck() {
           }
         };
 
-        if (status === 'DOWN') {
-          overallStatus = 'DOWN';
-        } else if (status === 'WARN' && overallStatus !== 'DOWN') {
+        if ((status === 'DOWN' || status === 'WARN') && overallStatus !== 'DOWN') {
           overallStatus = 'WARN';
         }
       } catch (err) {
@@ -82,7 +80,9 @@ async function performHealthCheck() {
           status: 'DOWN',
           details: { error: `Migration check failed: ${err.message}` }
         };
-        overallStatus = 'DOWN';
+        if (overallStatus !== 'DOWN') {
+          overallStatus = 'WARN';
+        }
       }
     }
   } else {
