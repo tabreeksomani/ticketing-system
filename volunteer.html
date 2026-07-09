@@ -72,7 +72,26 @@
   const API = 'api';
   let token = localStorage.getItem('volunteer_token');
   let user = JSON.parse(localStorage.getItem('volunteer_user') || 'null');
-  let tab = 'allocation'; // 'allocation' | 'reassign' | 'checkin'
+  // Check-in is disabled for this push - not linked from the tab bar, and
+  // its ?tab=checkin URL entry point is commented out below along with the
+  // rest of the check-in code (see the CHECK-IN section further down).
+  // const urlParams = new URLSearchParams(location.search);
+  let tab = 'allocation'; // 'allocation' | 'reassign' | 'view' (checkin disabled - see below)
+
+  // Which of this login's hubs everything (allocation, standby, check-in) is
+  // currently attributed to - chosen right after signing in, not as part of
+  // the sign-in form itself. A login with one hub never shows this bar and
+  // is just that hub, same as before this login could cover more than one.
+  let activeHubId = null;
+  function initActiveHub() {
+    if (!user || !user.hubs || !user.hubs.length) { activeHubId = null; return; }
+    const stored = localStorage.getItem('volunteer_active_hub');
+    activeHubId = user.hubs.some(h => h.id === stored) ? stored : user.hubs[0].id;
+  }
+  function setActiveHub(hubId) {
+    activeHubId = hubId;
+    localStorage.setItem('volunteer_active_hub', hubId);
+  }
 
   // ---- Ticket Allocation state ----
   let batch = []; // [{code, valid, reason}]
@@ -89,9 +108,13 @@
   // ---- View Ticket state ----
   let viewedTicket = null;
 
-  // ---- Ticket Check-in Scan state ----
-  let checkinBuses = [];
-  let activeCheckinBusId = null;
+  // ---- Ticket Check-in Scan state - disabled for this push, see the
+  // commented-out CHECK-IN section further down:
+  // let checkinSubTab = 'depart'; // 'depart' (O1: Send to Central) | 'arrive' (R2: Bus Arrived)
+  // let checkinTrips = [];
+  // let activeCheckinTripId = null;
+  // let showNewTripForm = false;
+  // let arrivalTrips = [];
 
   let audioCtx = null;
   let activeScanner = null;
@@ -297,14 +320,14 @@
 
   // ============================================================== LOGIN ====
   async function renderLogin() {
-    let hubNames = [];
-    try { hubNames = await api('/auth/login-ids?role=volunteer'); } catch (e) { /* login form still renders; submit will surface the error */ }
+    let logins = [];
+    try { logins = await api('/auth/login-ids?role=volunteer'); } catch (e) { /* login form still renders; submit will surface the error */ }
     document.getElementById('app').innerHTML = `
       <div class="login-wrap"><img class="brand-watermark" src="vendor/brand-mark.svg" alt="" /><div class="card login-card">
         <h1>${icon('ticket', 20)} Volunteer</h1>
-        <div class="sub">Choose your hub and enter its password to continue.</div>
-        <label>Hub</label>
-        <select id="loginHub">${hubNames.map(h => `<option value="${h.id}">${escapeHtml(h.name)}</option>`).join('')}</select>
+        <div class="sub">Choose your login and enter its password to continue.</div>
+        <label>Login</label>
+        <select id="loginHub">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.id)}</option>`).join('')}</select>
         <label>Password</label>
         <input id="loginPass" type="password" />
         <button class="btn btn-primary" id="loginBtn">Sign in</button>
@@ -319,6 +342,7 @@
         token = data.token; user = data.user;
         localStorage.setItem('volunteer_token', token);
         localStorage.setItem('volunteer_user', JSON.stringify(user));
+        initActiveHub();
         boot();
       } catch (e) { showToast(e.message); }
     };
@@ -328,17 +352,27 @@
   function logout() {
     stopActiveScanner();
     localStorage.removeItem('volunteer_token'); localStorage.removeItem('volunteer_user');
-    token = null; user = null; batch = []; currentTicket = null; viewedTicket = null; activeCheckinBusId = null;
+    token = null; user = null; batch = []; currentTicket = null; viewedTicket = null; activeCheckinTripId = null;
+    activeHubId = null;
     renderLogin();
   }
 
   function renderShell(bodyHtml) {
+    const showHubBar = user.hubs && user.hubs.length > 1;
     document.getElementById('app').innerHTML = `
       <header>
         <div><div class="title">${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
         <button id="logoutBtn">Sign out</button>
       </header>
       <main>
+        ${showHubBar ? `
+          <div class="card" style="padding:10px 14px;margin-bottom:10px;">
+            <label style="margin-bottom:6px;">Selling for</label>
+            <select id="hubSwitcher" style="margin-bottom:0;">
+              ${user.hubs.map(h => `<option value="${h.id}" ${h.id === activeHubId ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
         <div class="tabs">
           <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Allocate Ticket</div>
           <div class="tab ${tab === 'view' ? 'active' : ''}" data-tab="view">View Ticket</div>
@@ -351,6 +385,14 @@
       </main>
     `;
     document.getElementById('logoutBtn').onclick = logout;
+    const switcher = document.getElementById('hubSwitcher');
+    if (switcher) {
+      switcher.onchange = () => {
+        stopActiveScanner();
+        setActiveHub(switcher.value);
+        renderCurrentTab();
+      };
+    }
     document.querySelectorAll('.tab').forEach(el => {
       el.onclick = () => {
         stopActiveScanner();
@@ -496,7 +538,7 @@
 
   async function loadTimeslotsForSale(needed) {
     try {
-      allocTimeslots = await api('/hubs/' + encodeURIComponent(user.hubId) + '/timeslots');
+      allocTimeslots = await api('/hubs/' + encodeURIComponent(activeHubId) + '/timeslots');
       const card = document.getElementById('timeslotCard');
       if (!card) return;
       const usable = allocTimeslots.filter(t => t.available >= needed);
@@ -545,7 +587,7 @@
   async function finalizeSale(selection) {
     const validCodes = batch.filter(b => b.valid).map(b => b.code);
     try {
-      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, codes: validCodes }) });
+      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, hubId: activeHubId, codes: validCodes }) });
       feedback(true);
       if (result.rejected.length) {
         showToast(`${result.sold.length} sold, ${result.rejected.length} rejected at the last moment`);
@@ -768,52 +810,125 @@
   }
 
   // ========================================================== CHECK-IN ====
+  // Hub role covers two of the four legs: O1 (create/board/depart a trip
+  // to Central) and R2 (mark a bus arrived once it's back from Central -
+  // R2's validation already happened when Central boarded it, so arrival
+  // here is plate-only, no re-scan).
+  function checkinSubNavHtml() {
+    return `
+      <div class="tabs" style="margin-bottom:10px;">
+        <div class="tab ${checkinSubTab === 'depart' ? 'active' : ''}" data-subtab="depart">Send to Central</div>
+        <div class="tab ${checkinSubTab === 'arrive' ? 'active' : ''}" data-subtab="arrive">Bus Arrived</div>
+      </div>
+    `;
+  }
+  function wireCheckinSubNav() {
+    document.querySelectorAll('[data-subtab]').forEach(el => {
+      el.onclick = () => {
+        stopActiveScanner();
+        checkinSubTab = el.dataset.subtab;
+        renderCheckinTab();
+      };
+    });
+  }
+
   async function renderCheckinTab() {
-    renderShell(`<div class="card"><div class="empty">Loading buses…</div></div>`);
+    if (checkinSubTab === 'arrive') { renderCheckinArrivalsTab(); return; }
+
+    renderShell(checkinSubNavHtml() + `<div class="card"><div class="empty">Loading trips…</div></div>`);
+    wireCheckinSubNav();
     try {
-      checkinBuses = await api('/buses?leg=hub_to_central');
+      checkinTrips = await api('/trips?leg=O1&side=origin&origin=' + encodeURIComponent(activeHubId));
     } catch (e) { showToast(e.message); return; }
 
-    if (checkinBuses.length === 0) {
-      activeCheckinBusId = null;
-      renderShell(`<div class="card"><div class="empty">No buses have been set up for this hub yet. Ask your admin to add one.</div></div>`);
-      return;
-    }
-    if (activeCheckinBusId === null || !checkinBuses.some(b => b.id === activeCheckinBusId)) {
-      const open = checkinBuses.find(b => b.status !== 'departed');
-      activeCheckinBusId = (open || checkinBuses[0]).id;
-    }
-    renderCheckinBoardingScreen();
+    activeCheckinTripId = null;
+    renderCheckinTripPicker();
+  }
+
+  function renderCheckinTripPicker() {
+    renderShell(checkinSubNavHtml() + `
+      ${checkinTrips.length ? `
+        <div class="card">
+          <h2 class="section" style="font-size:11px;text-transform:uppercase;color:#756c5a;margin:0 0 10px;">Trips</h2>
+          ${checkinTrips.map(t => {
+            const isOpen = t.status !== 'arrived';
+            return `
+            <div class="pill" ${isOpen ? `data-trip="${t.id}"` : 'style="cursor:default;opacity:0.7;"'}>
+              <div><div class="name">${escapeHtml(t.licensePlate)}</div><div class="meta">${t.onboard} onboard</div></div>
+              <div class="bus-status status-${t.status}">${t.status}</div>
+            </div>
+          `;
+          }).join('')}
+        </div>
+      ` : '<div class="card"><div class="empty">No trips yet for this hub.</div></div>'}
+      <button class="btn btn-primary" id="newTripBtn">${icon('bus', 15)} New Trip</button>
+      ${showNewTripForm ? `
+        <div class="card" style="margin-top:10px;">
+          <label>License Plate</label>
+          <input id="newTripPlate" autocomplete="off" placeholder="e.g. BC 1234" />
+          <button class="btn btn-primary" id="createTripBtn">Create Trip</button>
+        </div>
+      ` : ''}
+    `);
+    wireCheckinSubNav();
+    document.querySelectorAll('[data-trip]').forEach(el => {
+      el.onclick = () => {
+        activeCheckinTripId = parseInt(el.dataset.trip, 10);
+        renderCheckinBoardingScreen();
+      };
+    });
+    document.getElementById('newTripBtn').onclick = () => {
+      showNewTripForm = !showNewTripForm;
+      renderCheckinTripPicker();
+      if (showNewTripForm) document.getElementById('newTripPlate').focus();
+    };
+    const createBtn = document.getElementById('createTripBtn');
+    if (createBtn) createBtn.onclick = async () => {
+      const licensePlate = document.getElementById('newTripPlate').value.trim();
+      if (!licensePlate) return;
+      try {
+        const trip = await api('/trips', { method: 'POST', body: JSON.stringify({ leg: 'O1', licensePlate, origin: activeHubId }) });
+        feedback(true);
+        showNewTripForm = false;
+        checkinTrips = [...checkinTrips, trip];
+        activeCheckinTripId = trip.id;
+        renderCheckinBoardingScreen();
+      } catch (e) { showToast(e.message); }
+    };
   }
 
   function renderCheckinBoardingScreen() {
-    const bus = checkinBuses.find(b => b.id === activeCheckinBusId);
-    renderShell(`
-      <label>Bus</label>
-      <select id="checkinBusSelect">
-        ${checkinBuses.map(b => `<option value="${b.id}" ${b.id === activeCheckinBusId ? 'selected' : ''}>${escapeHtml(b.label)} (${b.status})</option>`).join('')}
-      </select>
+    const trip = checkinTrips.find(t => t.id === activeCheckinTripId);
+    const canBoard = trip.status === 'scheduled' || trip.status === 'boarding';
+    const canDepart = trip.status === 'boarding';
+    // Normally Central confirms arrival, but the volunteer who departed this
+    // bus may be riding along with it - let them confirm it themselves too.
+    const canArrive = trip.status === 'departed';
+    renderShell(checkinSubNavHtml() + `
+      <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} All trips</button>
       <div class="card">
-        <div class="big-count" id="onboardCount">${bus.onboard}<span class="of"> / ${bus.capacity}</span></div>
-        <div class="cap-label">${escapeHtml(bus.label)} · <span class="bus-status status-${bus.status}">${bus.status}</span></div>
+        <div class="big-count" id="onboardCount">${trip.onboard}</div>
+        <div class="cap-label">onboard · ${escapeHtml(trip.licensePlate)} · <span class="bus-status status-${trip.status}">${trip.status}</span></div>
       </div>
-      ${bus.status !== 'departed' ? scannerCardHtml('board') : ''}
-      ${bus.status !== 'departed' ? `
+      ${canBoard ? scannerCardHtml('board') : `<div class="card"><div class="empty">This trip has departed for Central.</div></div>`}
+      ${canBoard ? `
         <button class="manual-toggle" id="manualToggle">Enter code manually instead</button>
         <div id="manualWrap" style="display:none;">
           <div class="card"><input id="boardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
         </div>
-      ` : '<div class="card"><div class="empty">This bus has departed.</div></div>'}
-      ${bus.status !== 'departed' ? `<button class="btn btn-danger" id="departBtn">Complete &amp; Depart</button>` : ''}
+      ` : ''}
+      ${canDepart ? `<button class="btn btn-danger" id="departBtn">Complete &amp; Depart</button>` : ''}
+      ${canArrive ? `<button class="btn btn-primary" id="arriveBtn">Mark Arrived at Central</button>` : ''}
     `);
+    wireCheckinSubNav();
 
-    document.getElementById('checkinBusSelect').onchange = (e) => {
+    document.getElementById('backBtn').onclick = () => {
       stopActiveScanner();
-      activeCheckinBusId = parseInt(e.target.value, 10);
-      renderCheckinBoardingScreen();
+      activeCheckinTripId = null;
+      renderCheckinTab();
     };
 
-    if (bus.status !== 'departed') {
+    if (canBoard) {
       wireManualToggle('manualToggle', 'manualWrap', 'boardInput');
       document.getElementById('boardInput').addEventListener('keydown', async (e) => {
         if (e.key !== 'Enter') return;
@@ -832,13 +947,25 @@
 
     const departBtn = document.getElementById('departBtn');
     if (departBtn) departBtn.onclick = async () => {
-      if (!confirm('Mark this bus as departed? No more check-ins will be allowed after this.')) return;
+      if (!confirm('Mark this trip as departed? No more check-ins will be allowed after this.')) return;
       try {
         stopActiveScanner();
-        const updated = await api(`/buses/${activeCheckinBusId}/depart`, { method: 'POST' });
-        checkinBuses = checkinBuses.map(b => (b.id === activeCheckinBusId ? updated : b));
+        await api(`/trips/${activeCheckinTripId}/depart`, { method: 'POST' });
         feedback(true);
-        renderCheckinBoardingScreen();
+        showToast('Trip marked departed', 'success');
+        activeCheckinTripId = null;
+        renderCheckinTab();
+      } catch (e) { showToast(e.message); }
+    };
+
+    const arriveBtn = document.getElementById('arriveBtn');
+    if (arriveBtn) arriveBtn.onclick = async () => {
+      try {
+        await api(`/trips/${activeCheckinTripId}/arrive`, { method: 'POST' });
+        feedback(true);
+        showToast('Trip marked arrived at Central', 'success');
+        activeCheckinTripId = null;
+        renderCheckinTab();
       } catch (e) { showToast(e.message); }
     };
   }
@@ -853,10 +980,10 @@
     }
     code = formatTicketCode(code); // canonical bare number from here on
     try {
-      const updated = await api(`/buses/${activeCheckinBusId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
-      checkinBuses = checkinBuses.map(b => (b.id === activeCheckinBusId ? updated : b));
+      const updated = await api(`/trips/${activeCheckinTripId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
+      checkinTrips = checkinTrips.map(t => (t.id === activeCheckinTripId ? updated : t));
       feedback(true);
-      document.getElementById('onboardCount').innerHTML = `${updated.onboard}<span class="of"> / ${updated.capacity}</span>`;
+      document.getElementById('onboardCount').textContent = updated.onboard;
       if (updated.issuedStandby) {
         showToast(`${formatTicketCode(code)} — new standby ticket issued & checked in`, 'success');
       } else {
@@ -868,6 +995,41 @@
     }
   }
 
+  // ---- R2: Bus Arrived (plate-match only, no scanning - validation
+  // already happened when Central boarded each ticket) ----
+  async function renderCheckinArrivalsTab() {
+    renderShell(checkinSubNavHtml() + `<div class="card"><div class="empty">Loading arrivals…</div></div>`);
+    wireCheckinSubNav();
+    try {
+      arrivalTrips = await api('/trips?leg=R2&side=arrival&destination=' + encodeURIComponent(activeHubId));
+    } catch (e) { showToast(e.message); return; }
+    renderCheckinArrivalsList();
+  }
+
+  function renderCheckinArrivalsList() {
+    renderShell(checkinSubNavHtml() + `
+      ${arrivalTrips.length ? arrivalTrips.map(t => `
+        <div class="pill" data-arrive="${t.id}">
+          <div><div class="name">${escapeHtml(t.licensePlate)}</div><div class="meta">${t.onboard} onboard</div></div>
+          <div>${icon('arrowRight', 16)}</div>
+        </div>
+      `).join('') : '<div class="card"><div class="empty">No buses en route from Central right now.</div></div>'}
+    `);
+    wireCheckinSubNav();
+    document.querySelectorAll('[data-arrive]').forEach(el => {
+      el.onclick = async () => {
+        const tripId = parseInt(el.dataset.arrive, 10);
+        try {
+          await api(`/trips/${tripId}/arrive`, { method: 'POST' });
+          feedback(true);
+          showToast('Bus marked arrived', 'success');
+          arrivalTrips = arrivalTrips.filter(t => t.id !== tripId);
+          renderCheckinArrivalsList();
+        } catch (e) { showToast(e.message); }
+      };
+    });
+  }
+
   function renderCurrentTab() {
     if (tab === 'allocation') renderAllocationTab();
     else if (tab === 'reassign') renderReassignTab();
@@ -877,6 +1039,7 @@
 
   function boot() {
     if (!token || !user) { renderLogin(); return; }
+    if (activeHubId === null) initActiveHub();
     renderCurrentTab();
   }
   boot();

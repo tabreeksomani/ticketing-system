@@ -42,9 +42,9 @@ async function requireRole(req, allowedRoles) {
   return user;
 }
 
-/** For hub-scoped actions: must be a volunteer AND match the given hubId. */
+/** For hub-scoped actions: must be a volunteer AND cover the given hubId. */
 function requireOwnHub(user, hubId) {
-  if (user.role !== 'volunteer' || user.hubId !== hubId) {
+  if (user.role !== 'volunteer' || !(user.hubIds || []).includes(hubId)) {
     jsonError('Not authorized for this hub', 403);
   }
 }

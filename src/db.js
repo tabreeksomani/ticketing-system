@@ -33,16 +33,37 @@ async function initSchema() {
       capacity INTEGER NOT NULL
     )`);
 
-    // Two roles only: 'admin' (hub_id NULL) and 'volunteer' (hub_id set).
-    // "id" doubles as the login username - for volunteers it's the hub's own
-    // id, so there's exactly one login row per hub with no separate
-    // identifier to keep in sync.
+    // "id" doubles as the login username. hub_id (single hub) is kept below
+    // for backward compatibility but is deprecated - superseded by the
+    // login_hubs mapping table further down, which lets one login cover
+    // multiple hubs. New code reads login_hubs, not hub_id.
     await client.query(`CREATE TABLE IF NOT EXISTS logins (
       id TEXT PRIMARY KEY,
       role TEXT NOT NULL,
       hub_id TEXT REFERENCES hubs(id) ON DELETE CASCADE,
       secret TEXT NOT NULL
     )`);
+    // Optional display name for the login picker (e.g. "Darkhana Team") -
+    // falls back to the login's own id when unset.
+    await client.query('ALTER TABLE logins ADD COLUMN IF NOT EXISTS name TEXT');
+
+    // Which hubs a login can sell for - a login maps to one or more hubs.
+    // Own surrogate PK (not the (login_id, hub_id) pair) with a UNIQUE
+    // constraint enforcing no duplicate pairs; login_id/hub_id are plain
+    // FK columns, neither is the primary key.
+    await client.query(`CREATE TABLE IF NOT EXISTS login_hubs (
+      id SERIAL PRIMARY KEY,
+      login_id TEXT NOT NULL REFERENCES logins(id) ON DELETE CASCADE,
+      hub_id TEXT NOT NULL REFERENCES hubs(id) ON DELETE CASCADE,
+      UNIQUE (login_id, hub_id)
+    )`);
+    // One-time backfill so existing single-hub logins keep working with no
+    // manual migration step - safe to re-run (ON CONFLICT DO NOTHING).
+    await client.query(`
+      INSERT INTO login_hubs (login_id, hub_id)
+      SELECT id, hub_id FROM logins WHERE hub_id IS NOT NULL
+      ON CONFLICT (login_id, hub_id) DO NOTHING
+    `);
 
     // Dormant until Check-in Scan is built - nothing currently calls
     // board/depart/arrive, so this table exists but stays empty. Left with
@@ -88,6 +109,49 @@ async function initSchema() {
     // exists so the constraint can be relaxed later without another migration.
     await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS is_ingressed BOOLEAN NOT NULL DEFAULT FALSE');
     await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS is_egressed BOOLEAN NOT NULL DEFAULT FALSE');
+
+    // The active bus-tracking system (the old `buses` table above is a
+    // separate, dormant, untouched system). A trip is a single journey, not
+    // a physical vehicle - no ownership/hub column here on purpose (a
+    // volunteer's own hub is forced into `origin` at creation time in the
+    // route handler, not stored redundantly as a separate FK). No capacity
+    // either - onboard count is just however many tickets reference this
+    // trip, no fixed limit to check against.
+    await client.query(`CREATE TABLE IF NOT EXISTS bus_trips (
+      id SERIAL PRIMARY KEY,
+      license_plate TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      destination TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      boarding_started_at TIMESTAMPTZ,
+      departed_at TIMESTAMPTZ,
+      arrived_at TIMESTAMPTZ
+    )`);
+
+    // One column-pair per leg of the full round trip (hub->central,
+    // central->venue, venue->central, central->hub) - named trip1-4 rather
+    // than leg1-4 to avoid colliding with the existing leg1_bus_id/
+    // leg1_boarded_at/leg2_bus_id/leg2_boarded_at columns above, which
+    // belong to the separate dormant `buses` system. Only trip1 (hub->
+    // central) is wired up to anything yet; trip2-4 sit unused until those
+    // legs get built - added now so no further migration is needed then.
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip1_id INTEGER REFERENCES bus_trips(id)');
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip1_boarded_at TIMESTAMPTZ');
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip2_id INTEGER REFERENCES bus_trips(id)');
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip2_boarded_at TIMESTAMPTZ');
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip3_id INTEGER REFERENCES bus_trips(id)');
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip3_boarded_at TIMESTAMPTZ');
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip4_id INTEGER REFERENCES bus_trips(id)');
+    await client.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS trip4_boarded_at TIMESTAMPTZ');
+
+    // Full 4-leg round trip (O1 hub->central, O2 central->venue, R1
+    // venue->central, R2 central->hub) - trip1-4 above map directly to
+    // O1-R2 in that order. `leg` lets route handlers dispatch generically
+    // instead of re-deriving it from origin/destination on every query.
+    await client.query('ALTER TABLE bus_trips ADD COLUMN IF NOT EXISTS leg TEXT');
+    await client.query("UPDATE bus_trips SET leg = 'O1' WHERE leg IS NULL");
+    await client.query('ALTER TABLE bus_trips ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES logins(id) ON DELETE SET NULL');
+    await client.query('ALTER TABLE bus_trips ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()');
 
     await client.query(`CREATE TABLE IF NOT EXISTS login_attempts (
       bucket TEXT PRIMARY KEY,

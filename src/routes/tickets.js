@@ -44,6 +44,13 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
     jsonError('timeslotId (or standby) and at least one code are required', 400);
   }
 
+  // Which of this login's hubs the sale is attributed to - explicit now
+  // that one login can cover several hubs (was implicitly the login's own
+  // single hub before).
+  const hubId = String(req.body.hubId || '').trim();
+  if (!hubId) jsonError('hubId is required', 400);
+  if (!user.hubIds.includes(hubId)) jsonError('Not authorized for this hub', 403);
+
   const sold = [];
   const rejected = [];
 
@@ -58,7 +65,7 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
           rejected.push({ code, reason: 'Already sold' });
           continue;
         }
-        await client.query('INSERT INTO tickets (code, hub_id, timeslot_id, is_standby) VALUES ($1, $2, NULL, TRUE)', [code, user.hubId]);
+        await client.query('INSERT INTO tickets (code, hub_id, timeslot_id, is_standby) VALUES ($1, $2, NULL, TRUE)', [code, hubId]);
         sold.push(code);
       }
       await client.query('COMMIT');
@@ -71,8 +78,8 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
     if (!timeslot) {
       jsonError('Timeslot not found', 404);
     }
-    if (timeslot.hub_id !== user.hubId) {
-      jsonError('That timeslot does not belong to your hub', 403);
+    if (timeslot.hub_id !== hubId) {
+      jsonError('That timeslot does not belong to the selected hub', 403);
     }
 
     const { rows: soldRows } = await client.query('SELECT COUNT(*)::int AS c FROM tickets WHERE timeslot_id = $1', [timeslotId]);
@@ -87,7 +94,7 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
         rejected.push({ code, reason: 'Already sold' });
         continue;
       }
-      await client.query('INSERT INTO tickets (code, hub_id, timeslot_id) VALUES ($1, $2, $3)', [code, user.hubId, timeslotId]);
+      await client.query('INSERT INTO tickets (code, hub_id, timeslot_id) VALUES ($1, $2, $3)', [code, hubId, timeslotId]);
       sold.push(code);
     }
     await client.query('COMMIT');
@@ -118,7 +125,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
   if (!ticket) {
     jsonError('This ticket has not been allocated', 404);
   }
-  if (user.role === 'volunteer' && ticket.hub_id !== user.hubId) {
+  if (user.role === 'volunteer' && !user.hubIds.includes(ticket.hub_id)) {
     jsonError('This ticket was not sold at your hub', 403);
   }
   res.json({
@@ -192,7 +199,7 @@ router.post('/tickets/reassign', asyncHandler(async (req, res) => {
     if (!ticket) {
       jsonError('Unknown ticket code', 404);
     }
-    if (user.role === 'volunteer' && ticket.hub_id !== user.hubId) {
+    if (user.role === 'volunteer' && !user.hubIds.includes(ticket.hub_id)) {
       jsonError('This ticket was not sold at your hub', 403);
     }
     if (ticket.leg1_bus_id !== null) {

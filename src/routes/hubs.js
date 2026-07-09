@@ -28,7 +28,7 @@ const TIMESLOT_SELECT = `
 router.get('/hubs/:hubId/timeslots', asyncHandler(async (req, res) => {
   const user = await requireRole(req, ['volunteer', 'admin']);
   const hubId = decodeURIComponent(req.params.hubId);
-  if (user.role === 'volunteer' && user.hubId !== hubId) {
+  if (user.role === 'volunteer' && !user.hubIds.includes(hubId)) {
     jsonError('Not authorized for this hub', 403);
   }
   const { rows } = await pool.query(`${TIMESLOT_SELECT} WHERE t.hub_id = $1 ORDER BY t.departure_time ASC`, [hubId]);
