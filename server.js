@@ -22,14 +22,13 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Register health check BEFORE schema-readiness middleware so it can report DB downtime gracefully
+app.use(require('./src/routes/health'));
+
 // Ensure the schema exists before the first request is handled - hubs,
 // timeslots, and logins themselves are seeded by hand (psql), not by the app.
 app.use('/api', (req, res, next) => {
   ready().then(() => next()).catch(next);
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
 });
 
 app.use('/api/auth', require('./src/routes/auth'));

@@ -199,6 +199,22 @@ than the browser's Shape Detection API, since that API doesn't exist on iOS Safa
   always same-origin — no `Access-Control-Allow-Origin` header is sent at all.
 - Error responses never leak internal detail unless `APP_DEBUG=1` is explicitly set.
 
+## Health Check
+
+The app provides a health check endpoint at `/health` (and `/api/health`) that reports the application and database connectivity status.
+* **Status Codes**: Returns `200 OK` if the system is fully operational, or `503 Service Unavailable` if the database is down or connection timeouts occur.
+* **Caching (60s TTL)**: To prevent load balancer pings from overloading the database, successful results are cached in memory for **60 seconds**. Failed health checks are cached for only **5 seconds** to allow fast recovery discovery.
+
+## Connection Pooling
+
+The PostgreSQL client uses connection pooling with tuning configurations that can be overridden in the `.env` file:
+* `DATABASE_POOL_MAX` (default: `10`): Maximum active connections.
+* `DATABASE_POOL_MIN` (default: `4`): Minimum idle connections kept pre-warmed.
+* `DATABASE_POOL_CONNECTION_TIMEOUT_MS` (default: `10000`): Pool checkout timeout.
+* `DATABASE_STATEMENT_TIMEOUT_MS` (default: `60000`): SQL execution limit.
+* `DATABASE_LOCK_TIMEOUT_MS` (default: `10000`): Row lock acquisition limit.
+* `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` (default: `30000`): Idle transaction limit.
+
 ## Files
 
 ```
@@ -211,7 +227,7 @@ src/db.js           Postgres pool, schema creation (no data seeding), rate-limit
 src/auth.js         JWT signing/verification, role/hub-scope guards
 src/errors.js       HttpError + asyncHandler
 src/util.js         Timing-safe string comparison
-src/routes/         auth.js, hubs.js (timeslots read), buses.js, tickets.js, dashboard.js
+src/routes/         auth.js, hubs.js, buses.js, tickets.js, dashboard.js, health.js
 docker-compose.yml  Local Postgres for development (started by `npm run setup`)
 scripts/setup.js    One-command run: starts Postgres, creates .env, seeds, starts the server
 scripts/seed.js     Manual bulk setup: upserts hubs/timeslots/logins from a JSON file
