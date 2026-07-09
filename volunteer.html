@@ -137,7 +137,7 @@
   // needed and kept in localStorage so it stays stable for this browser but
   // distinct from every other demo'ers. It lets demo'ers exercise the scan flow
   // with codes that can't collide with each other or with real ticket numbers.
-  // The trailing "-" is also what keeps formatTicketCode idempotent (below).
+  // The trailing "-" just separates the prefix from the ticket number.
   function demoPrefix() {
     let p = localStorage.getItem('demo_prefix');
     if (!p) {
@@ -148,16 +148,21 @@
     return p;
   }
 
-  // Canonical ticket number: strips the "MQEBC" prefix and zero padding
-  // (e.g. "MQEBC00042" -> "42"). This is applied both to what the volunteer
-  // sees AND to the code the moment it's scanned/typed, so the bare number is
-  // what gets held in state and sent to the backend. Anything without the
-  // expected prefix is passed through verbatim. Mirrors normalizeCode() on the
-  // server, which normalizes again defensively.
+  // Turns a raw scanned/typed code into its canonical form - the single value
+  // that's held in state, sent to the backend, and displayed. Strips the
+  // "MQEBC" prefix and zero padding (e.g. "MQEBC00042" -> "42"); anything
+  // without that prefix is passed through verbatim. Mirrors normalizeCode() on
+  // the server, which normalizes again defensively.
   //
-  // For demo'ers the canonical code is that bare number with a browser-specific
-  // prefix, isolating their test tickets.
-  function formatTicketCode(code, user) {
+  // For demo'ers it also prepends a browser-specific prefix, isolating their
+  // test tickets. The server stores/returns that prefixed code untouched, so
+  // it's already canonical everywhere downstream.
+  //
+  // IMPORTANT: call this exactly once, at the input boundary (scan/manual
+  // entry). Everything after - state, batch entries, API responses - already
+  // holds the canonical code, so re-running it would double the demo prefix
+  // (e.g. "T6cbbd3a0-T6cbbd3a0-0"). Render those codes as-is.
+  function canonicalizeCode(code, user) {
     if (typeof code !== 'string') return code;
     const bare = /^MQEBC/i.test(code) ? code.slice(5).replace(/^0+/, '') || '0' : code;
     if (user && user.id === 'demo') return demoPrefix() + bare;
@@ -484,7 +489,7 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code, user); // canonical bare number from here on
+    code = canonicalizeCode(code, user); // canonical code from here on
     if (batch.some(b => b.code === code)) {
       feedback(false);
       showToast('Already scanned in this batch');
@@ -504,7 +509,7 @@
       // just surface the reason and move on.
       if (!result.valid) {
         feedback(false);
-        showToast(`${formatTicketCode(code, user)}: ${result.reason}`);
+        showToast(`${code}: ${result.reason}`);
         return;
       }
       batch.push({ code, valid: true, reason: null });
@@ -522,7 +527,7 @@
       <div class="card"><div class="batch-list">
         ${batch.map((b, i) => `
           <div class="batch-row ${b.valid ? '' : 'reject-row'}">
-            <span>${escapeHtml(formatTicketCode(b.code, user))}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
+            <span>${escapeHtml(b.code)}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
             <button data-remove="${i}">${icon('close', 14)}</button>
           </div>
         `).join('')}
@@ -676,7 +681,7 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code, user); // canonical bare number from here on
+    code = canonicalizeCode(code, user); // canonical code from here on
     try {
       const ticket = await api('/tickets/lookup?code=' + encodeURIComponent(code));
       feedback(true);
@@ -710,7 +715,7 @@
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
-        <div class="ticket-code">${escapeHtml(formatTicketCode(t.code, user))}</div>
+        <div class="ticket-code">${escapeHtml(t.code)}</div>
         ${statusBlock}
       </div>
       ${showPicker ? '<div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>' : ''}
@@ -765,7 +770,7 @@
         body: JSON.stringify({ code: currentTicket.code, timeslotId: selectedReassignSlotId }),
       });
       feedback(true);
-      showToast(`${formatTicketCode(result.code, user)} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
+      showToast(`${result.code} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
       renderLookupStep();
     } catch (e) {
       feedback(false);
@@ -814,7 +819,7 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code, user); // canonical bare number from here on
+    code = canonicalizeCode(code, user); // canonical code from here on
     try {
       const ticket = await api('/tickets/view?code=' + encodeURIComponent(code));
       feedback(true);
@@ -1020,16 +1025,16 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code, user); // canonical bare number from here on
+    code = canonicalizeCode(code, user); // canonical code from here on
     try {
       const updated = await api(`/trips/${activeCheckinTripId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
       checkinTrips = checkinTrips.map(t => (t.id === activeCheckinTripId ? updated : t));
       feedback(true);
       document.getElementById('onboardCount').textContent = updated.onboard;
       if (updated.issuedStandby) {
-        showToast(`${formatTicketCode(code, user)} — new standby ticket issued & checked in`, 'success');
+        showToast(`${code} — new standby ticket issued & checked in`, 'success');
       } else {
-        showToast(`${formatTicketCode(code, user)} checked in`, 'success');
+        showToast(`${code} checked in`, 'success');
       }
     } catch (e) {
       feedback(false);
