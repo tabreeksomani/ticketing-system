@@ -1,7 +1,8 @@
 require('dotenv').config();
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
-const { ready } = require('./src/db');
+const { pool } = require('./src/db');
 const { HttpError } = require('./src/errors');
 
 const app = express();
@@ -25,11 +26,7 @@ app.use('/api', (req, res, next) => {
 // Register health check BEFORE schema-readiness middleware so it can report DB downtime gracefully
 app.use(require('./src/routes/health'));
 
-// Ensure the schema exists before the first request is handled - hubs,
-// timeslots, and logins themselves are seeded by hand (psql), not by the app.
-app.use('/api', (req, res, next) => {
-  ready().then(() => next()).catch(next);
-});
+
 
 app.use('/api/auth', require('./src/routes/auth'));
 app.use('/api', require('./src/routes/hubs'));
@@ -60,7 +57,60 @@ app.use((err, req, res, next) => {
   });
 });
 
+async function verifyDatabaseSchema() {
+  const behavior = process.env.DATABASE_MIGRATION_BEHAVIOR || 'WARN';
+  if (behavior === 'IGNORE') return;
+
+  try {
+    const migrationsDir = path.join(__dirname, 'migrations');
+    if (!fs.existsSync(migrationsDir)) return;
+
+    const localFiles = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+
+    // Check if the schema_migrations table exists
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM pg_tables 
+        WHERE schemaname = 'public' AND tablename = 'schema_migrations'
+      );
+    `);
+
+    let pending = [];
+    if (!tableCheck.rows[0].exists) {
+      pending = localFiles;
+    } else {
+      const { rows } = await pool.query('SELECT name FROM schema_migrations');
+      const runMigrations = rows.map(r => r.name);
+      pending = localFiles.filter(f => !runMigrations.includes(f));
+    }
+
+    if (pending.length > 0) {
+      if (behavior === 'KILL') {
+        console.error('\n======================================================');
+        console.error('❌ FATAL: Pending database migrations detected on startup!');
+        console.error('Server is configured to KILL on pending migrations.');
+        console.error(`Please run "npm run db:migrate" to apply ${pending.length} pending migration(s):`);
+        pending.forEach(f => console.error(`   - ${f}`));
+        console.error('======================================================\n');
+        process.exit(1);
+      } else if (behavior === 'WARN') {
+        console.warn('\n======================================================');
+        console.warn('⚠️  WARNING: There are pending database migrations!');
+        console.warn(`Please run "npm run db:migrate" to apply ${pending.length} pending migration(s):`);
+        pending.forEach(f => console.warn(`   - ${f}`));
+        console.warn('======================================================\n');
+      }
+    }
+  } catch (err) {
+    console.error('Failed to verify database migration status on boot:', err.message);
+    if (behavior === 'KILL') {
+      process.exit(1);
+    }
+  }
+}
+
 const port = parseInt(process.env.PORT, 10) || 8000;
 app.listen(port, () => {
   console.log(`Ticketing system listening on http://localhost:${port}`);
+  verifyDatabaseSchema();
 });

@@ -58,6 +58,9 @@ async function main() {
   console.log('Waiting for Postgres...');
   await waitForPostgres(connectionString);
 
+  console.log('Running database migrations...');
+  execFileSync('node', [path.join('scripts', 'migrate.js')], { cwd: root, stdio: 'inherit' });
+
   const dataFile = process.argv[2] || path.join('scripts', 'example.json');
   console.log(`Seeding from ${dataFile} ...`);
   execFileSync('node', [path.join('scripts', 'seed.js'), dataFile], { cwd: root, stdio: 'inherit' });
