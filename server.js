@@ -102,7 +102,11 @@ async function verifyDatabaseSchema() {
       }
     }
   } catch (err) {
-    console.error('Failed to verify database migration status on boot:', err.message);
+    let errMsg = err.message;
+    if (!errMsg && err.errors && err.errors.length > 0) {
+      errMsg = err.errors.map(e => e.message).join('; ');
+    }
+    console.error('Failed to verify database migration status on boot:', errMsg || err.code || err);
     if (behavior === 'KILL') {
       process.exit(1);
     }
@@ -110,7 +114,15 @@ async function verifyDatabaseSchema() {
 }
 
 const port = parseInt(process.env.PORT, 10) || 8000;
-app.listen(port, () => {
-  console.log(`Ticketing system listening on http://localhost:${port}`);
-  verifyDatabaseSchema();
+
+async function startServer() {
+  await verifyDatabaseSchema();
+  app.listen(port, () => {
+    console.log(`Ticketing system listening on http://localhost:${port}`);
+  });
+}
+
+startServer().catch(err => {
+  console.error('Fatal server startup failure:', err.message);
+  process.exit(1);
 });

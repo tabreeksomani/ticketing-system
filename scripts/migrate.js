@@ -20,9 +20,10 @@ async function migrate() {
     process.exit(1);
   }
 
-  const client = await pool.connect();
+  let client;
 
   try {
+    client = await pool.connect();
     // 1. Ensure the schema_migrations tracking table exists
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -75,7 +76,9 @@ async function migrate() {
     console.error('Migration runner failed:', err.message);
     process.exit(1);
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
     await pool.end();
   }
 }
