@@ -2,8 +2,19 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const { execSync } = require('child_process');
 const { pool } = require('./src/db');
 const { HttpError } = require('./src/errors');
+
+// Cache git info once on startup to avoid spawning sub-processes on HTTP requests
+let gitInfo = { sha: 'unknown', date: 'unknown' };
+try {
+  const sha = execSync('git rev-parse --short=7 HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  const date = execSync('TZ=America/Los_Angeles git log -1 --format=%cd --date=format:"%Y-%m-%d %H:%M:%S"', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  gitInfo = { sha, date };
+} catch (err) {
+  console.warn('Failed to retrieve Git info on startup:', err.message);
+}
 
 const app = express();
 app.use(express.json());
@@ -21,6 +32,10 @@ app.use('/api', (req, res, next) => {
     return;
   }
   next();
+});
+
+app.get('/api/git-info', (req, res) => {
+  res.json(gitInfo);
 });
 
 // Register health check BEFORE schema-readiness middleware so it can report DB downtime gracefully
