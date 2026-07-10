@@ -134,7 +134,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
     timeslotId: ticket.timeslot_id !== null ? ticket.timeslot_id : null,
     departureTime: ticket.departure_time,
     isStandby: ticket.is_standby,
-    boarded: ticket.leg1_bus_id !== null,
+    boarded: ticket.trip1_id !== null,
   });
 }));
 
@@ -167,7 +167,7 @@ router.get('/tickets/view', asyncHandler(async (req, res) => {
     hubName: ticket.hub_name,
     departureTime: ticket.departure_time,
     isStandby: ticket.is_standby,
-    boarded: ticket.leg1_bus_id !== null,
+    boarded: ticket.trip1_id !== null,
   });
 }));
 
@@ -202,7 +202,7 @@ router.post('/tickets/reassign', asyncHandler(async (req, res) => {
     if (user.role === 'volunteer' && !user.hubIds.includes(ticket.hub_id)) {
       jsonError('This ticket was not sold at your hub', 403);
     }
-    if (ticket.leg1_bus_id !== null) {
+    if (ticket.trip1_id !== null) {
       jsonError('This ticket has already boarded a bus and can no longer be switched', 409);
     }
     if (ticket.timeslot_id === newTimeslotId) {

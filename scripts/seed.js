@@ -52,6 +52,17 @@ async function main() {
       console.log('admin login: set');
     }
 
+    for (const role of ['venue', 'central']) {
+      if (data[role] && data[role].password) {
+        await pool.query(
+          `INSERT INTO logins (id, role, hub_id, secret) VALUES ($1, $1, NULL, $2)
+           ON CONFLICT (id) DO UPDATE SET secret = excluded.secret`,
+          [role, data[role].password]
+        );
+        console.log(`${role} login: set`);
+      }
+    }
+
     for (const hub of data.hubs || []) {
       const id = hub.id || slugify(hub.name);
       await pool.query(
