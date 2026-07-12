@@ -72,7 +72,7 @@ function lintFile(filePath) {
       console.error(`\n   If this change is genuinely intended (e.g. dropping a temporary table),`);
       console.error(`   add the following comment at the top of the file to bypass this check:`);
       console.error(`   -- ${BYPASS_COMMENT}`);
-      console.error(`   Or run the migration with the --force flag override.\n`);
+      console.error(`   Or run the migration with the --force / -f flag override.\n`);
       return false;
     }
   }
