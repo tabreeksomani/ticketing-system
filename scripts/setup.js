@@ -53,6 +53,15 @@ async function main() {
 
   startPostgres();
 
+  // Setup local Git pre-commit hook if .git directory is present
+  const gitHooksDir = path.join(root, '.git', 'hooks');
+  if (fs.existsSync(gitHooksDir)) {
+    const preCommitHookPath = path.join(gitHooksDir, 'pre-commit');
+    const hookContent = `#!/bin/sh\n\nnpm test\n`;
+    fs.writeFileSync(preCommitHookPath, hookContent, { mode: 0o755 });
+    console.log('Configured local Git pre-commit hook for migration safety checks.');
+  }
+
   require('dotenv').config({ path: envPath });
   const connectionString = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/ticketing_system';
   console.log('Waiting for Postgres...');

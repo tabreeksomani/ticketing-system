@@ -226,12 +226,27 @@ npm run db:migrate
 ```
 *Note: In development, `npm run setup` automatically runs all migrations before seeding.*
 
-### Creating a New Migration
-To add a schema change or run data operations:
+### Creating a New Migration & Safety Checks
+To add a schema change:
 1. Create a new `.sql` file in the `migrations/` folder.
 2. Prefix it with the next sequential 3-digit number (e.g. `migrations/002_add_discount_code.sql`).
 3. Write standard, raw SQL statement(s).
 4. Run `npm run db:migrate` locally to verify that it executes and applies successfully.
+
+#### 🛡️ Migration Safety Check (Linter)
+To prevent accidental data loss or backward-compatibility breaks in production (e.g. during rolling deploys), a static analysis linter script blocks destructive DDL operations:
+* **Blocked Actions**: `DROP TABLE`, `DROP COLUMN`, `RENAME COLUMN`, `RENAME TO` (table rename), and changing column data types (`ALTER COLUMN ... TYPE`).
+* **Git Pre-commit Hook**: Running `npm run setup` automatically installs a local Git pre-commit hook. If you attempt to commit a migration that contains one of the blocked operations, `git commit` will fail.
+* **PR / CI Build Failures**: Any PR build running `npm test` will run the migration linter and fail if a destructive migration is detected.
+
+#### 🔓 How to Bypass Safety Checks
+If a destructive migration is genuinely intended (e.g. dropping a temporary table, or cleanup during scheduled maintenance):
+* **Bypass via Comment**: Add the following comment anywhere in the SQL file:
+  ```sql
+  -- safety-bypass: allow-destructive-operations
+  ```
+  This is the recommended way, as it explicitly documents the intentional nature of the change in version control.
+
 
 ### Tracking Applied Migrations
 All executed migrations are recorded in the `schema_migrations` table in your database. The runner compares this list against files in the `migrations/` directory to ensure each script runs exactly once.
