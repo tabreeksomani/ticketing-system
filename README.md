@@ -235,17 +235,33 @@ To add a schema change:
 
 #### 🛡️ Migration Safety Check (Linter)
 To prevent accidental data loss or backward-compatibility breaks in production (e.g. during rolling deploys), a static analysis linter script blocks destructive DDL operations:
-* **Blocked Actions**: `DROP TABLE`, `DROP COLUMN`, `RENAME COLUMN`, `RENAME TO` (table rename), and changing column data types (`ALTER COLUMN ... TYPE`).
+* **Blocked Actions**:
+  * `DROP TABLE` (prevent accidental table deletion)
+  * `DROP COLUMN` or `ALTER TABLE ... DROP` (prevent active column deletion)
+  * `RENAME COLUMN` or `RENAME TO` (prevent breaking active database references)
+  * `ALTER COLUMN ... TYPE` or `SET DATA TYPE` (prevent data type mismatch crashes)
+  * `CREATE INDEX` without `CONCURRENTLY` (prevent locking table writes during index build)
+  * `TRUNCATE` (prevent accidental table wipes)
+  * `ADD COLUMN ... NOT NULL` without `DEFAULT` (prevent database errors when adding columns to populated tables)
 * **Git Pre-commit Hook**: Running `npm run setup` automatically installs a local Git pre-commit hook. If you attempt to commit a migration that contains one of the blocked operations, `git commit` will fail.
 * **PR / CI Build Failures**: Any PR build running `npm test` will run the migration linter and fail if a destructive migration is detected.
 
 #### 🔓 How to Bypass Safety Checks
 If a destructive migration is genuinely intended (e.g. dropping a temporary table, or cleanup during scheduled maintenance):
-* **Bypass via Comment**: Add the following comment anywhere in the SQL file:
+* **Bypass via Comment (Recommended)**: Add the following comment anywhere in the SQL file:
   ```sql
   -- safety-bypass: allow-destructive-operations
   ```
   This is the recommended way, as it explicitly documents the intentional nature of the change in version control.
+* **Bypass via CLI Override**: Run the migration runner with the `--force` argument:
+  ```bash
+  npm run db:migrate -- --force
+  ```
+* **Bypass via Environment Override**: Run with the `ALLOW_DESTRUCTIVE_MIGRATIONS=true` environment variable:
+  ```bash
+  ALLOW_DESTRUCTIVE_MIGRATIONS=true npm run db:migrate
+  ```
+
 
 
 ### Tracking Applied Migrations

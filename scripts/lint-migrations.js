@@ -32,6 +32,18 @@ const PROHIBITED_OPERATIONS = [
   {
     regex: /\bALTER\s+COLUMN\s+.*\s+SET\s+DATA\s+TYPE\b/i,
     message: "Changing column data types is prohibited. Create a new column with the new type instead to avoid type mismatch crashes."
+  },
+  {
+    regex: /\bCREATE\s+INDEX\b(?!.*\bCONCURRENTLY\b)/i,
+    message: "CREATE INDEX without CONCURRENTLY is prohibited because it locks table writes. Use CREATE INDEX CONCURRENTLY instead."
+  },
+  {
+    regex: /\bTRUNCATE\b/i,
+    message: "TRUNCATE TABLE is prohibited to prevent accidental bulk data destruction."
+  },
+  {
+    regex: /\bADD\s+COLUMN\s+.*\bNOT\s+NULL\b(?!.*\bDEFAULT\b)/i,
+    message: "Adding a NOT NULL column without a DEFAULT value is prohibited on existing tables. Add it as nullable first, backfill data, and then set NOT NULL."
   }
 ];
 
@@ -59,7 +71,8 @@ function lintFile(filePath) {
       console.error(`   👉 ${operation.message}`);
       console.error(`\n   If this change is genuinely intended (e.g. dropping a temporary table),`);
       console.error(`   add the following comment at the top of the file to bypass this check:`);
-      console.error(`   -- ${BYPASS_COMMENT}\n`);
+      console.error(`   -- ${BYPASS_COMMENT}`);
+      console.error(`   Or run the migration with the --force flag override.\n`);
       return false;
     }
   }
@@ -97,4 +110,12 @@ function runLinter() {
   process.exit(0);
 }
 
-runLinter();
+if (require.main === module) {
+  runLinter();
+} else {
+  module.exports = {
+    PROHIBITED_OPERATIONS,
+    lintFile,
+    BYPASS_COMMENT
+  };
+}

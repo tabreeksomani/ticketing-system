@@ -52,6 +52,20 @@ async function migrate() {
 
     console.log(`Found ${pendingList.length} pending migration(s) to apply.`);
 
+    // 4b. Perform safety validation checks unless overridden via environment or command-line flag
+    const force = process.argv.includes('--force') || process.env.ALLOW_DESTRUCTIVE_MIGRATIONS === 'true';
+    if (force) {
+      console.log('⚠️  [WARNING] --force override flag detected. Bypassing safety check for destructive operations.');
+    } else {
+      const { lintFile } = require('./lint-migrations');
+      for (const file of pendingList) {
+        const filePath = path.join(migrationsDir, file);
+        if (!lintFile(filePath)) {
+          throw new Error(`Aborting migration execution due to safety validation failure in ${file}. Use --force to override.`);
+        }
+      }
+    }
+
     // 5. Execute pending migrations sequentially in a transaction
     for (const file of pendingList) {
       console.log(`Applying migration: ${file} ...`);
