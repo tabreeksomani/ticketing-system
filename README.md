@@ -215,6 +215,34 @@ The PostgreSQL client uses connection pooling with tuning configurations that ca
 * `DATABASE_LOCK_TIMEOUT_MS` (default: `10000`): Row lock acquisition limit.
 * `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` (default: `30000`): Idle transaction limit.
 
+## Database Migrations
+
+Database schema changes (adding tables, indexes, or modifying columns) are decoupled from application startup and managed sequentially via raw `.sql` files in the `migrations/` directory.
+
+### Running Migrations
+To check for and apply any pending database migrations:
+```bash
+npm run db:migrate
+```
+*Note: In development, `npm run setup` automatically runs all migrations before seeding.*
+
+### Creating a New Migration
+To add a schema change or run data operations:
+1. Create a new `.sql` file in the `migrations/` folder.
+2. Prefix it with the next sequential 3-digit number (e.g. `migrations/002_add_discount_code.sql`).
+3. Write standard, raw SQL statement(s).
+4. Run `npm run db:migrate` locally to verify that it executes and applies successfully.
+
+### Tracking Applied Migrations
+All executed migrations are recorded in the `schema_migrations` table in your database. The runner compares this list against files in the `migrations/` directory to ensure each script runs exactly once.
+
+### Startup Behavior Config
+By default, the server performs a non-blocking check on boot to verify if any migrations are pending. You can configure this behavior in your `.env` file using the `DATABASE_MIGRATION_BEHAVIOR` variable:
+* `WARN` (default): Prints a warning block in console logs listing all pending files, but boots normally.
+* `KILL`: Outputs a fatal error and terminates the process (`process.exit(1)`) immediately, preventing the server from starting.
+* `IGNORE`: Bypasses migration checking entirely.
+
+
 ## Files
 
 ```
