@@ -26,8 +26,17 @@ DATABASE_SSL=true
 DATABASE_CA_CERT=./global-bundle.pem
 PORT=80
 APP_DEBUG=0
+
+# Behavior when server starts with unapplied migrations (WARN, KILL, IGNORE)
+DATABASE_MIGRATION_BEHAVIOR=WARN
 ```
-4. setup the service definition
+
+4. Apply Database Migrations (Only needed once per schema release, not for every instance scale-out):
+```
+$ npm run db:migrate
+```
+
+5. setup the service definition
 ```
 # /etc/systemd/system/mulaqatexpress.service
 [Unit]
@@ -44,7 +53,7 @@ Environment=NODE_ENV=production
 [Install]
 WantedBy=multi-user.target
 ```
-5. finally, run the service
+6. finally, run the service
 ```
 $ sudo systemctl daemon-reload
 $ sudo systemctl restart mulaqatexpress
