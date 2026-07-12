@@ -73,27 +73,44 @@ router.get('/buses', asyncHandler(async (req, res) => {
   res.json(rows.map(busRow));
 }));
 
+// Admin can create a bus for any hub/leg. A volunteer can also create one now
+// (for the Check-in page's self-service "new bus" flow) - but strictly
+// scoped to their own hub and forced to leg='hub_to_central', regardless of
+// what's in the request body, since a volunteer should never be able to
+// create a bus for a different hub or the (dormant) other leg.
 router.post('/buses', asyncHandler(async (req, res) => {
-  await requireRole(req, ['admin']);
-  const leg = req.body.leg;
+  const user = await requireRole(req, ['admin', 'volunteer']);
   const label = String(req.body.label || '').trim();
   const capacity = req.body.capacity !== undefined ? parseInt(req.body.capacity, 10) : null;
-  if (!['hub_to_central', 'central_to_venue'].includes(leg) || label === '' || !capacity) {
-    jsonError('leg, label, and capacity are required', 400);
+  if (label === '' || !capacity) {
+    jsonError('label and capacity are required', 400);
   }
 
-  let hubId = null;
+  let leg;
+  let hubId;
   let timeslotId = null;
-  if (leg === 'hub_to_central') {
-    hubId = req.body.hubId || null;
-    if (!hubId) {
-      jsonError('hubId is required for a hub_to_central bus', 400);
+
+  if (user.role === 'volunteer') {
+    leg = 'hub_to_central';
+    hubId = user.hubId;
+  } else {
+    leg = req.body.leg;
+    if (!['hub_to_central', 'central_to_venue'].includes(leg)) {
+      jsonError('leg is required', 400);
     }
-    const { rows } = await pool.query('SELECT id FROM hubs WHERE id = $1', [hubId]);
-    if (rows.length === 0) {
-      jsonError('Hub not found', 404);
+    if (leg === 'hub_to_central') {
+      hubId = req.body.hubId || null;
+      if (!hubId) {
+        jsonError('hubId is required for a hub_to_central bus', 400);
+      }
+      const { rows } = await pool.query('SELECT id FROM hubs WHERE id = $1', [hubId]);
+      if (rows.length === 0) {
+        jsonError('Hub not found', 404);
+      }
+      timeslotId = req.body.timeslotId ? parseInt(req.body.timeslotId, 10) : null;
+    } else {
+      hubId = null;
     }
-    timeslotId = req.body.timeslotId ? parseInt(req.body.timeslotId, 10) : null;
   }
 
   const { rows: inserted } = await pool.query(
@@ -260,14 +277,15 @@ router.post('/buses/:id(\\d+)/depart', asyncHandler(async (req, res) => {
   res.json(busRow(await fetchBus(busId)));
 }));
 
-// Central marshal confirms a hub bus has physically arrived at the central hub.
-// This is a manual confirmation, not a calculated ETA - it's what actually moves
-// a bus's passengers into the "currently at central hub" dashboard count.
+// Confirms a hub bus has physically arrived at central. This is a manual
+// confirmation, not a calculated ETA - it's what actually moves a bus's
+// passengers into the "currently at central hub" dashboard count.
+// No dedicated Central login exists yet, so this is marked by the same
+// hub that departed the bus (requireOwnHub) rather than a separate role -
+// admin can also do it. ('central' role kept for whenever Central gets its
+// own login later.)
 router.post('/buses/:id(\\d+)/arrive', asyncHandler(async (req, res) => {
   const user = await requireAuth(req);
-  if (!['central', 'admin'].includes(user.role)) {
-    jsonError('Not authorized', 403);
-  }
   const busId = parseInt(req.params.id, 10);
   const bus = await fetchBus(busId);
   if (!bus) {
@@ -275,6 +293,11 @@ router.post('/buses/:id(\\d+)/arrive', asyncHandler(async (req, res) => {
   }
   if (bus.leg !== 'hub_to_central') {
     jsonError('Only hub-to-central buses can be marked arrived', 400);
+  }
+  if (user.role === 'volunteer') {
+    requireOwnHub(user, bus.hub_id);
+  } else if (!['central', 'admin'].includes(user.role)) {
+    jsonError('Not authorized', 403);
   }
   if (bus.status === 'arrived') {
     jsonError('This bus is already marked arrived', 409);

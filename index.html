@@ -22,8 +22,18 @@
   <div class="wrap">
     <h1><span class="not-live">NOT LIVE</span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-4px;margin-right:4px;"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z"/><path d="M13 5v2M13 11v2M13 17v2"/></svg>Mulaqat Express System</h1>
     <a class="card" href="volunteer.html"><div class="name">Ticketing</div><div class="desc">Sell tickets and update/reassign timeslots at your hub</div></a>
+    <a class="card stage-only" href="checkin.html" style="display:none;"><div class="name">Check-in</div><div class="desc">Run the shuttle - Hubs, Central, or Venue</div></a>
     <a class="card" href="admin.html"><div class="name">Admin</div><div class="desc">Live dashboards</div></a>
     <a class="card" href="faq.html"><div class="name">FAQ</div><div class="desc">Frequently asked questions about the Mulaqat Express</div></a>
   </div>
+  <script>
+    // Cards marked class="stage-only" stay hidden on prod by default - add
+    // ?stage=true to the URL to reveal all of them at once, for testing new
+    // pages on prod before rolling them out generally. Add the same class to
+    // any future in-progress card to gate it the same way.
+    if (new URLSearchParams(location.search).get('stage') === 'true') {
+      document.querySelectorAll('.stage-only').forEach(el => { el.style.display = 'block'; });
+    }
+  </script>
 </body>
 </html>

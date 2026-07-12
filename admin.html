@@ -68,6 +68,22 @@
   .prop-bar-track { background: #F1F0EC; border-radius: 6px; height: 10px; width: 100%; overflow: hidden; }
   .prop-bar-fill { height: 100%; border-radius: 6px; transition: width 0.3s; }
   .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+  .bus-status { font-size: 10px; text-transform: uppercase; font-weight: 700; padding: 4px 9px; border-radius: 10px; background: #F1F0EC; color: #57534E; }
+  .status-scheduled { background: #F1F0EC; color: #57534E; }
+  .status-boarding { background: #FEF3C7; color: #92400E; }
+  .status-departed { background: #F3ECDD; color: #6b5636; }
+  .status-arrived { background: #DCFCE7; color: #166534; }
+  .trip-mini-card { background: #FFFFFF; border: 1px solid #E8E1D3; border-left: 4px solid #8C734C; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
+  .trip-mini-card.dest-venue { border-left-color: #2563EB; }
+  .trip-mini-card.dest-central { border-left-color: #8C734C; }
+  .trip-mini-card.dest-hub { border-left-color: #059669; }
+  .trip-menu-wrap { position: relative; flex-shrink: 0; }
+  .trip-menu-btn { background: none; border: none; color: #756c5a; cursor: pointer; padding: 4px; border-radius: 6px; line-height: 0; }
+  .trip-menu-btn:hover { background: #F1F0EC; }
+  .trip-menu-dropdown { position: absolute; top: calc(100% + 4px); right: 0; z-index: 10; background: #FFFFFF; border: 1px solid #E2D9C4; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.14); min-width: 170px; overflow: hidden; }
+  .trip-menu-dropdown button { display: block; width: 100%; text-align: left; padding: 10px 14px; font-size: 12px; font-weight: 600; background: none; border: none; cursor: pointer; color: #241C10; }
+  .trip-menu-dropdown button:hover { background: #F7F5F0; }
+  .trip-menu-dropdown button.danger { color: #B91C1C; }
 </style>
 </head>
 <body>
@@ -81,6 +97,17 @@
   let expandedSalesHubs = new Set();
   let dailySalesData = [];
   let selectedDailySalesHubs = null; // null until first load, then a Set of hubIds
+  let ingressData = null;
+  let expandedIngressTrips = new Set();
+  let ingressTripBreakdowns = {}; // tripId -> array, cached once fetched
+  let selectedIngressHubs = null; // null until first load, then a Set of hubIds - filters O1 trip cards by origin hub
+  let ingressLegFilter = 'all'; // 'all' | 'O1' | 'O2' - single-select, since the hub pills can't filter O2 at all (its origin is always "central", not a real hub)
+  let egressData = null;
+  let expandedEgressTrips = new Set();
+  let egressTripBreakdowns = {}; // tripId -> array, cached once fetched
+  let selectedEgressHubs = null; // null until first load, then a Set of hubIds - filters R2 trip cards by destination hub
+  let egressLegFilter = 'all'; // 'all' | 'R1' | 'R2' - single-select, since the hub pills can't filter R1 at all (its destination is always "central", not a real hub)
+  let openTripMenu = null; // tripId of the one trip-card 3-dot menu currently open, or null
 
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -102,6 +129,18 @@
     return `${formatted} PT`;
   }
 
+  // For real TIMESTAMPTZ values (e.g. bus_trips.departed_at) - these are
+  // genuine UTC instants, unlike departureTime's timezone-less free text, so
+  // this converts properly via the browser's Intl timezone database instead
+  // of reinterpreting the raw digits.
+  function formatTimestampPT(iso) {
+    if (!iso) return '';
+    const formatted = new Date(iso).toLocaleString('en-US', {
+      timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+    return `${formatted} PT`;
+  }
+
   // ---- inline SVG icon library (no external icon font/CDN) ----
   const ICON_PATHS = {
     ticket: '<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z"/><path d="M13 5v2M13 11v2M13 17v2"/>',
@@ -113,6 +152,7 @@
     users: '<circle cx="9" cy="8" r="3"/><path d="M3.5 20c0-3.3 2.5-6 5.5-6s5.5 2.7 5.5 6"/><circle cx="17" cy="9" r="2.3"/><path d="M15.7 14.2c2.3.5 3.8 2.5 3.8 5.8"/>',
     pin: '<path d="M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/>',
     chevronDown: '<path d="M6 9l6 6 6-6"/>',
+    moreVertical: '<circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/>',
     home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11h14V9"/>',
   };
   function icon(name, size) {
@@ -167,6 +207,28 @@
       </div>
     `;
   }
+  // Admin-only trip status overrides (depart/arrive/undo) are destructive
+  // enough to warrant a confirm step, same reasoning as checkin.html's
+  // custom modal - a native confirm() reads as an untrusted browser popup
+  // rather than part of the app.
+  function showConfirmModal(message, confirmLabel, onConfirm) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:320px;width:100%;margin:0;">
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:16px;text-align:center;">${escapeHtml(message)}</div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline" id="confirmCancelBtn" style="flex:1;">Cancel</button>
+          <button class="btn btn-primary" id="confirmOkBtn" style="flex:1;">${escapeHtml(confirmLabel)}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#confirmCancelBtn').onclick = () => overlay.remove();
+    overlay.querySelector('#confirmOkBtn').onclick = () => { overlay.remove(); onConfirm(); };
+  }
+
   function showToast(msg, kind) {
     const t = document.createElement('div');
     t.className = 'toast ' + (kind === 'success' ? 'toast-success' : 'toast-error');
@@ -219,7 +281,9 @@
   }
 
   const TABS = [
-    ['sales', 'Sales'], 
+    ['sales', 'Sales'],
+    ['ingress', 'Departing'],
+    ['egress', 'Returning'],
     // ['transport', 'Transport Buses'],
   ];
 
@@ -360,14 +424,14 @@
             <div class="ring-info">
               <div class="ring-name">${escapeHtml(hub.hubName)}</div>
               <div class="ring-meta">${hub.totalSold} of ${hub.totalCapacity} sold across ${hub.timeslots.length} timeslot(s)</div>
-              <div class="ring-meta">${hub.totalBoarded} boarded · ${hub.standbyIssued} standby issued</div>
+              <div class="ring-meta">${hub.totalBoarded} boarded · ${hub.totalReturned} returned · ${hub.standbyIssued} standby issued</div>
             </div>
             <div style="transform:rotate(${expanded ? '180deg' : '0deg'}); transition:transform 0.15s; color:#756c5a;">${icon('chevronDown', 18)}</div>
           </div>
-          ${expanded ? (hub.timeslots.length ? `
+          ${expanded ? ((hub.timeslots.length || hub.standbyIssued) ? `
             <div class="table-wrap" style="margin-top:10px; border-top:1px solid #E8E1D3; padding-top:10px;">
               <table>
-                <tr><th>Departure</th><th>Capacity</th><th>Allocated</th><th>Remaining</th><th>Boarded</th></tr>
+                <tr><th>Departure</th><th>Capacity</th><th>Allocated</th><th>Remaining</th><th>Boarded</th><th>Returned</th></tr>
                 ${hub.timeslots.map(t => `
                   <tr>
                     <td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</span></td>
@@ -375,14 +439,24 @@
                     <td>${t.sold}</td>
                     <td>${t.available}</td>
                     <td>${t.boarded}</td>
+                    <td>${t.returned}</td>
                   </tr>
                 `).join('')}
+                <tr>
+                  <td>Standby</td>
+                  <td>—</td>
+                  <td>${hub.standbyIssued}</td>
+                  <td>—</td>
+                  <td>${hub.standbyBoarded}</td>
+                  <td>${hub.standbyReturned}</td>
+                </tr>
                 <tr style="font-weight:700;">
                   <td>Total</td>
                   <td>${hub.totalCapacity}</td>
-                  <td>${hub.totalSold}</td>
+                  <td>${hub.totalSold + hub.standbyIssued}</td>
                   <td>${hub.totalCapacity - hub.totalSold}</td>
-                  <td>${hub.totalBoarded}</td>
+                  <td>${hub.totalBoarded + hub.standbyBoarded}</td>
+                  <td>${hub.totalReturned + hub.standbyReturned}</td>
                 </tr>
               </table>
             </div>
@@ -409,6 +483,467 @@
         renderSalesHtml();
       };
     });
+  }
+
+  // ============================================================= INGRESS ====
+  // The outbound half of the journey (O1 hub->central, O2 central->venue) as
+  // one 5-stage funnel. "Departed Hub" is cumulative (everyone who has EVER
+  // left their hub, whether or not they've since moved further along) - a
+  // running total that only ever goes up. The other four are live snapshots
+  // of exactly one stage right now, and partition every en-route/arrived
+  // rider into mutually exclusive buckets:
+  //   En Route to Central -> At Central -> En Route to Venue -> Arrived at Venue
+
+  // "scheduled" and "boarding" both just mean "created, not yet departed" -
+  // merged into one label. "Arrived" cards don't get a badge at all - they
+  // only ever show up under a "Completed" heading, so repeating "Arrived"
+  // on every one of them is pure noise.
+  const STATUS_LABELS = { scheduled: 'Boarding', boarding: 'Boarding', departed: 'Departed' };
+
+  // Location ids/literals ('surrey', 'central', 'venue') shown capitalized -
+  // uses the trip's own origin/destination rather than a generic per-leg
+  // label, so an O1 card reads "Surrey → Central" instead of "Hub → Central".
+  function prettyLocation(id) {
+    if (!id) return id;
+    return id.charAt(0).toUpperCase() + id.slice(1);
+  }
+
+  // Decorative ring showing a trip's live onboard count - NOT a progress/
+  // capacity gauge (bus capacity varies per trip and isn't reliably fixed),
+  // just a solid circle with the count centered inside. Matches the same
+  // ring used on the Check-in pages.
+  function onboardRing(count, size) {
+    size = size || 44;
+    const stroke = Math.max(3, Math.round(size * 0.08));
+    const r = (size - stroke) / 2;
+    const fontSize = Math.round(size * 0.32);
+    return `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="display:block;flex-shrink:0;">
+        <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#8C734C" stroke-width="${stroke}" />
+        <text x="${size / 2}" y="${size / 2 + fontSize * 0.35}" text-anchor="middle" font-size="${fontSize}" fill="#241C10" font-weight="800">${count}</text>
+      </svg>
+    `;
+  }
+
+  function formatShortTime(iso) {
+    if (!iso) return null;
+    const s = new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
+    return s.replace(' ', '').toLowerCase();
+  }
+  // "11:24pm → 9:29pm" / "9:10pm → —" if not yet arrived / '' if not departed yet.
+  function tripTimestampsHtml(t) {
+    if (!t.departedAt) return '';
+    return `${formatShortTime(t.departedAt)} → ${t.arrivedAt ? formatShortTime(t.arrivedAt) : '—'}`;
+  }
+
+  async function renderIngressTab() {
+    showLoadingIfEmpty();
+    let data;
+    try { data = await api('/dashboard/ingress'); } catch (e) { showToast(e.message); return; }
+    ingressData = data;
+    // Default to every hub selected, but only the first time - once the
+    // admin is deselecting hubs, later refreshes shouldn't stomp their pick.
+    if (selectedIngressHubs === null) {
+      selectedIngressHubs = new Set(data.hubs.map(h => h.hubId));
+    }
+    renderIngressHtml();
+  }
+
+  function renderIngressHtml() {
+    const data = ingressData;
+    setTabBody(`
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-icon">${icon('building', 20)}</div><div class="stat-value">${data.departedHubTotal}</div><div class="stat-label">Departed Hubs (Total)</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToCentral}</div><div class="stat-label">En Route to Central</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.atCentral}</div><div class="stat-label">At Central</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToVenue}</div><div class="stat-label">En Route to Venue</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.arrivedAtVenue}</div><div class="stat-label">Arrived at Venue</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${data.avgWaitAtCentralMinutes !== null ? data.avgWaitAtCentralMinutes + 'm' : '—'}</div><div class="stat-label">Avg Wait at Central</div></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section">Departed Hub, by Hub (Total)</h2>
+        ${data.hubs.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr><th>Hub</th><th>Departed (Total)</th></tr>
+              ${data.hubs.map(h => `
+                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.departedTotal}</td></tr>
+              `).join('')}
+              <tr style="font-weight:700;">
+                <td>Total</td><td>${data.departedHubTotal}</td>
+              </tr>
+            </table>
+          </div>
+        ` : '<div class="empty">No hubs set up yet.</div>'}
+      </div>
+
+      <div class="card">
+        <h2 class="section">Bus Trips (Hub → Central → Venue)</h2>
+        <div style="display:flex; gap:16px; margin-bottom:14px; font-size:12px; color:#57534E;">
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8C734C;vertical-align:-1px;margin-right:5px;"></span>To Central</div>
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#2563EB;vertical-align:-1px;margin-right:5px;"></span>To Venue</div>
+        </div>
+        <div class="tabs" style="margin-bottom:14px;">
+          <div class="tab ${ingressLegFilter === 'all' ? 'active' : ''}" data-ingress-leg="all">All</div>
+          <div class="tab ${ingressLegFilter === 'O1' ? 'active' : ''}" data-ingress-leg="O1">To Central</div>
+          <div class="tab ${ingressLegFilter === 'O2' ? 'active' : ''}" data-ingress-leg="O2">To Venue</div>
+        </div>
+        ${ingressLegFilter !== 'O2' ? `
+          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+            ${data.hubs.map(h => `
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px; background:${selectedIngressHubs.has(h.hubId) ? '#F3ECDD' : '#F7F5F0'}; border:1px solid ${selectedIngressHubs.has(h.hubId) ? '#8C734C' : '#E2D9C4'}; border-radius:20px; padding:6px 12px; cursor:pointer;">
+                <input type="checkbox" data-ingress-hub="${h.hubId}" ${selectedIngressHubs.has(h.hubId) ? 'checked' : ''} style="margin:0;" />
+                ${escapeHtml(h.hubName)}
+              </label>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${!data.trips.length ? '<div class="empty">No trips yet.</div>' : (() => {
+          // The tab bar picks which leg(s) show at all; hub pills further
+          // filter O1 by origin (only shown for All/To Central, since O2's
+          // origin is always "central" - not a real hub to filter by).
+          const trips = data.trips.filter(t => {
+            if (ingressLegFilter !== 'all' && t.leg !== ingressLegFilter) return false;
+            if (t.leg === 'O1') return selectedIngressHubs.has(t.origin);
+            return true;
+          });
+          if (!trips.length) return '<div class="empty">No trips match the current filters.</div>';
+          const enRoute = trips.filter(t => t.status !== 'arrived');
+          const completed = trips.filter(t => t.status === 'arrived');
+          return `
+            <h2 class="section" style="font-size:11px;">En Route (${enRoute.length})</h2>
+            ${enRoute.length ? enRoute.map(ingressTripCardHtml).join('') : '<div class="empty">None right now.</div>'}
+            <h2 class="section" style="font-size:11px;margin-top:16px;">Completed (${completed.length})</h2>
+            ${completed.length ? completed.map(ingressTripCardHtml).join('') : '<div class="empty">None yet.</div>'}
+          `;
+        })()}
+      </div>
+    `);
+    document.querySelectorAll('[data-ingress-trip]').forEach(el => {
+      el.onclick = () => toggleIngressTrip(parseInt(el.dataset.ingressTrip, 10));
+    });
+    document.querySelectorAll('[data-ingress-hub]').forEach(el => {
+      el.onchange = () => {
+        const hubId = el.dataset.ingressHub;
+        if (el.checked) selectedIngressHubs.add(hubId);
+        else selectedIngressHubs.delete(hubId);
+        renderIngressHtml();
+      };
+    });
+    document.querySelectorAll('[data-ingress-leg]').forEach(el => {
+      el.onclick = () => { ingressLegFilter = el.dataset.ingressLeg; renderIngressHtml(); };
+    });
+    wireTripMenu('ingress');
+  }
+
+  // Admin-only status overrides, shown as a 3-dot menu on each trip card.
+  // Which actions make sense depends entirely on the trip's current status -
+  // e.g. offering "Undo Departed" on a trip that's still boarding would just
+  // produce a 409 from the backend, so the menu only ever shows valid moves.
+  const TRIP_ACTION_CONFIRM = {
+    depart: { message: 'Mark this trip as departed?', label: 'Mark Departed' },
+    arrive: { message: 'Mark this trip as arrived?', label: 'Mark Arrived' },
+    'undo-depart': { message: 'Undo departure and return this trip to boarding?', label: 'Undo Departed' },
+    'undo-arrive': { message: 'Undo arrival and return this trip to departed?', label: 'Undo Arrived' },
+  };
+
+  function tripMenuActions(t) {
+    const actions = [];
+    if (t.status === 'boarding') actions.push({ action: 'depart', label: 'Mark Departed' });
+    if (t.status === 'departed') {
+      actions.push({ action: 'arrive', label: 'Mark Arrived' });
+      actions.push({ action: 'undo-depart', label: 'Undo Departed', danger: true });
+    }
+    if (t.status === 'arrived') actions.push({ action: 'undo-arrive', label: 'Undo Arrived', danger: true });
+    return actions;
+  }
+
+  function tripMenuHtml(t) {
+    const actions = tripMenuActions(t);
+    if (!actions.length) return '';
+    const open = openTripMenu === t.tripId;
+    return `
+      <div class="trip-menu-wrap">
+        <button class="trip-menu-btn" data-trip-menu-toggle="${t.tripId}">${icon('moreVertical', 18)}</button>
+        ${open ? `
+          <div class="trip-menu-dropdown">
+            ${actions.map(a => `<button class="${a.danger ? 'danger' : ''}" data-trip-action="${a.action}" data-trip-id="${t.tripId}">${escapeHtml(a.label)}</button>`).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function wireTripMenu(kind) {
+    document.querySelectorAll('[data-trip-menu-toggle]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const tripId = parseInt(el.dataset.tripMenuToggle, 10);
+        openTripMenu = openTripMenu === tripId ? null : tripId;
+        if (kind === 'ingress') renderIngressHtml(); else renderEgressHtml();
+      };
+    });
+    document.querySelectorAll('[data-trip-action]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const tripId = parseInt(el.dataset.tripId, 10);
+        const action = el.dataset.tripAction;
+        const cfg = TRIP_ACTION_CONFIRM[action];
+        showConfirmModal(cfg.message, cfg.label, async () => {
+          try {
+            await api(`/trips/${tripId}/${action}`, { method: 'POST' });
+            openTripMenu = null;
+            showToast('Trip updated', 'success');
+            if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+          } catch (e) { showToast(e.message); }
+        });
+      };
+    });
+  }
+
+  function ingressTripCardHtml(t) {
+    const destClass = t.destination === 'venue' ? 'dest-venue' : 'dest-central';
+    const expanded = expandedIngressTrips.has(t.tripId);
+    const breakdown = ingressTripBreakdowns[t.tripId];
+    const timestamps = tripTimestampsHtml(t);
+    return `
+      <div class="trip-mini-card ${destClass}" data-ingress-trip="${t.tripId}">
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+          ${onboardRing(t.onboard, 44)}
+          <div style="flex:1; min-width:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <div>
+              <div style="font-weight:700;font-size:14px;">${escapeHtml(t.licensePlate)}</div>
+              <div class="ring-meta">${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))}</div>
+              ${timestamps ? `<div class="ring-meta" style="margin-top:2px;">${timestamps}</div>` : ''}
+            </div>
+            <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+              ${t.status !== 'arrived' ? `<div class="bus-status status-${t.status}">${STATUS_LABELS[t.status] || t.status}</div>` : ''}
+              ${tripMenuHtml(t)}
+            </div>
+          </div>
+        </div>
+        ${expanded ? `
+          <div style="margin-top:10px;border-top:1px solid #E8E1D3;padding-top:10px;">
+            ${breakdown ? (breakdown.length ? `
+              <div class="table-wrap">
+                <table>
+                  <tr><th>Hub</th><th>Timeslot</th><th>Count</th></tr>
+                  ${breakdown.map(b => `
+                    <tr>
+                      <td>${escapeHtml(b.hubName)}</td>
+                      <td>${b.isStandby ? 'Standby' : escapeHtml(formatDepartureTime(b.departureTime))}</td>
+                      <td>${b.count}</td>
+                    </tr>
+                  `).join('')}
+                </table>
+              </div>
+            ` : '<div class="empty">No tickets scanned onto this trip yet.</div>') : '<div class="empty">Loading…</div>'}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  async function toggleIngressTrip(tripId) {
+    openTripMenu = null;
+    if (expandedIngressTrips.has(tripId)) {
+      expandedIngressTrips.delete(tripId);
+      renderIngressHtml();
+      return;
+    }
+    expandedIngressTrips.add(tripId);
+    renderIngressHtml();
+    if (!ingressTripBreakdowns[tripId]) {
+      try {
+        ingressTripBreakdowns[tripId] = await api(`/dashboard/trip/${tripId}/breakdown`);
+      } catch (e) { showToast(e.message); }
+      renderIngressHtml();
+    }
+  }
+
+  // ============================================================== EGRESS ====
+  // Mirror image of Ingress, for the return trip (R1 venue->central, R2
+  // central->hub). "Departed Venue" is cumulative, same convention as
+  // Ingress's "Departed Hub." Unlike Ingress (where Venue is one shared
+  // destination), R2's destination varies per rider - so "At Central" and
+  // "Arrived at Hub" only mean something once broken down per hub, which is
+  // why those two get their own tables up top instead of just a single
+  // aggregate tile.
+  async function renderEgressTab() {
+    showLoadingIfEmpty();
+    let data;
+    try { data = await api('/dashboard/egress'); } catch (e) { showToast(e.message); return; }
+    egressData = data;
+    if (selectedEgressHubs === null) {
+      selectedEgressHubs = new Set(data.waitingPerHub.map(h => h.hubId));
+    }
+    renderEgressHtml();
+  }
+
+  function renderEgressHtml() {
+    const data = egressData;
+    setTabBody(`
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-icon">${icon('building', 20)}</div><div class="stat-value">${data.departedVenueTotal}</div><div class="stat-label">Departed Venue (Total)</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToCentral}</div><div class="stat-label">En Route to Central</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.atCentralTotal}</div><div class="stat-label">At Central</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToHub}</div><div class="stat-label">En Route to Hub</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.arrivedAtHubTotal}</div><div class="stat-label">Arrived at Hub (Total)</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${data.avgWaitAtCentralMinutes !== null ? data.avgWaitAtCentralMinutes + 'm' : '—'}</div><div class="stat-label">Avg Wait at Central</div></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section">Waiting at Central, by Hub</h2>
+        ${data.waitingPerHub.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr><th>Hub</th><th>Waiting</th><th>En Route to Central</th><th>Total</th></tr>
+              ${data.waitingPerHub.map(h => `
+                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.waitingCount}</td><td>${h.enRouteCount}</td><td>${h.waitingCount + h.enRouteCount}</td></tr>
+              `).join('')}
+              <tr style="font-weight:700;">
+                <td>Total</td><td>${data.atCentralTotal}</td><td>${data.enRouteToCentral}</td><td>${data.atCentralTotal + data.enRouteToCentral}</td>
+              </tr>
+            </table>
+          </div>
+        ` : '<div class="empty">No hubs set up yet.</div>'}
+      </div>
+
+      <div class="card">
+        <h2 class="section">Arrived at Hub, by Hub (Total)</h2>
+        ${data.arrivedPerHub.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr><th>Hub</th><th>Arrived (Total)</th></tr>
+              ${data.arrivedPerHub.map(h => `
+                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.count}</td></tr>
+              `).join('')}
+              <tr style="font-weight:700;">
+                <td>Total</td><td>${data.arrivedAtHubTotal}</td>
+              </tr>
+            </table>
+          </div>
+        ` : '<div class="empty">No hubs set up yet.</div>'}
+      </div>
+
+      <div class="card">
+        <h2 class="section">Bus Trips (Venue → Central → Hub)</h2>
+        <div style="display:flex; gap:16px; margin-bottom:14px; font-size:12px; color:#57534E;">
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8C734C;vertical-align:-1px;margin-right:5px;"></span>To Central</div>
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#059669;vertical-align:-1px;margin-right:5px;"></span>To Hub</div>
+        </div>
+        <div class="tabs" style="margin-bottom:14px;">
+          <div class="tab ${egressLegFilter === 'all' ? 'active' : ''}" data-egress-leg="all">All</div>
+          <div class="tab ${egressLegFilter === 'R1' ? 'active' : ''}" data-egress-leg="R1">To Central</div>
+          <div class="tab ${egressLegFilter === 'R2' ? 'active' : ''}" data-egress-leg="R2">To Hub</div>
+        </div>
+        ${egressLegFilter !== 'R1' ? `
+          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+            ${data.waitingPerHub.map(h => `
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px; background:${selectedEgressHubs.has(h.hubId) ? '#F3ECDD' : '#F7F5F0'}; border:1px solid ${selectedEgressHubs.has(h.hubId) ? '#8C734C' : '#E2D9C4'}; border-radius:20px; padding:6px 12px; cursor:pointer;">
+                <input type="checkbox" data-egress-hub="${h.hubId}" ${selectedEgressHubs.has(h.hubId) ? 'checked' : ''} style="margin:0;" />
+                ${escapeHtml(h.hubName)}
+              </label>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${!data.trips.length ? '<div class="empty">No trips yet.</div>' : (() => {
+          // The tab bar picks which leg(s) show at all; hub pills further
+          // filter R2 by destination (only shown for All/To Hub, since R1's
+          // destination is always "central" - not a real hub to filter by).
+          const trips = data.trips.filter(t => {
+            if (egressLegFilter !== 'all' && t.leg !== egressLegFilter) return false;
+            if (t.leg === 'R2') return selectedEgressHubs.has(t.destination);
+            return true;
+          });
+          if (!trips.length) return '<div class="empty">No trips match the current filters.</div>';
+          const enRoute = trips.filter(t => t.status !== 'arrived');
+          const completed = trips.filter(t => t.status === 'arrived');
+          return `
+            <h2 class="section" style="font-size:11px;">En Route (${enRoute.length})</h2>
+            ${enRoute.length ? enRoute.map(egressTripCardHtml).join('') : '<div class="empty">None right now.</div>'}
+            <h2 class="section" style="font-size:11px;margin-top:16px;">Completed (${completed.length})</h2>
+            ${completed.length ? completed.map(egressTripCardHtml).join('') : '<div class="empty">None yet.</div>'}
+          `;
+        })()}
+      </div>
+    `);
+    document.querySelectorAll('[data-egress-trip]').forEach(el => {
+      el.onclick = () => toggleEgressTrip(parseInt(el.dataset.egressTrip, 10));
+    });
+    document.querySelectorAll('[data-egress-hub]').forEach(el => {
+      el.onchange = () => {
+        const hubId = el.dataset.egressHub;
+        if (el.checked) selectedEgressHubs.add(hubId);
+        else selectedEgressHubs.delete(hubId);
+        renderEgressHtml();
+      };
+    });
+    document.querySelectorAll('[data-egress-leg]').forEach(el => {
+      el.onclick = () => { egressLegFilter = el.dataset.egressLeg; renderEgressHtml(); };
+    });
+    wireTripMenu('egress');
+  }
+
+  function egressTripCardHtml(t) {
+    const destClass = t.leg === 'R2' ? 'dest-hub' : 'dest-central';
+    const expanded = expandedEgressTrips.has(t.tripId);
+    const breakdown = egressTripBreakdowns[t.tripId];
+    const timestamps = tripTimestampsHtml(t);
+    return `
+      <div class="trip-mini-card ${destClass}" data-egress-trip="${t.tripId}">
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+          ${onboardRing(t.onboard, 44)}
+          <div style="flex:1; min-width:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <div>
+              <div style="font-weight:700;font-size:14px;">${escapeHtml(t.licensePlate)}</div>
+              <div class="ring-meta">${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))}</div>
+              ${timestamps ? `<div class="ring-meta" style="margin-top:2px;">${timestamps}</div>` : ''}
+            </div>
+            <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+              ${t.status !== 'arrived' ? `<div class="bus-status status-${t.status}">${STATUS_LABELS[t.status] || t.status}</div>` : ''}
+              ${tripMenuHtml(t)}
+            </div>
+          </div>
+        </div>
+        ${expanded ? `
+          <div style="margin-top:10px;border-top:1px solid #E8E1D3;padding-top:10px;">
+            ${breakdown ? (breakdown.length ? `
+              <div class="table-wrap">
+                <table>
+                  <tr><th>Hub</th><th>Timeslot</th><th>Count</th></tr>
+                  ${breakdown.map(b => `
+                    <tr>
+                      <td>${escapeHtml(b.hubName)}</td>
+                      <td>${b.isStandby ? 'Standby' : escapeHtml(formatDepartureTime(b.departureTime))}</td>
+                      <td>${b.count}</td>
+                    </tr>
+                  `).join('')}
+                </table>
+              </div>
+            ` : '<div class="empty">No tickets scanned onto this trip yet.</div>') : '<div class="empty">Loading…</div>'}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  async function toggleEgressTrip(tripId) {
+    openTripMenu = null;
+    if (expandedEgressTrips.has(tripId)) {
+      expandedEgressTrips.delete(tripId);
+      renderEgressHtml();
+      return;
+    }
+    expandedEgressTrips.add(tripId);
+    renderEgressHtml();
+    if (!egressTripBreakdowns[tripId]) {
+      try {
+        egressTripBreakdowns[tripId] = await api(`/dashboard/trip/${tripId}/breakdown`);
+      } catch (e) { showToast(e.message); }
+      renderEgressHtml();
+    }
   }
 
   // =========================================================== TRANSPORT ====
@@ -478,6 +1013,8 @@
 
   function loadCurrentTabBody() {
     if (tab === 'sales') renderSalesTab();
+    else if (tab === 'ingress') renderIngressTab();
+    else if (tab === 'egress') renderEgressTab();
     else if (tab === 'transport') renderTransportTab();
   }
 
@@ -500,7 +1037,7 @@
     renderCurrentTab();
   }
   boot();
-  setInterval(() => { if (token && ['sales','transport'].includes(tab)) refreshCurrentTabData(); }, 10000);
+  setInterval(() => { if (token && ['sales','ingress','egress','transport'].includes(tab)) refreshCurrentTabData(); }, 10000);
 </script>
 <script src="src/footer.js"></script>
 </body>

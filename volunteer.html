@@ -34,8 +34,8 @@
   .bus-status { font-size: 10px; text-transform: uppercase; font-weight: 700; padding: 4px 9px; border-radius: 10px; }
   .status-scheduled { background: #F1F0EC; color: #57534E; }
   .status-boarding { background: #FEF3C7; color: #92400E; }
-  .status-departed { background: #DCFCE7; color: #166534; }
-  .status-arrived { background: #F3ECDD; color: #6b5636; }
+  .status-departed { background: #F3ECDD; color: #6b5636; }
+  .status-arrived { background: #DCFCE7; color: #166534; }
   .batch-list { max-height: 34vh; overflow-y: auto; margin-top: 4px; }
   .batch-row { display: flex; justify-content: space-between; align-items: center; background: #F7F5F0; border-radius: 8px; padding: 11px 12px; margin-bottom: 6px; font-size: 14px; color: #241C10; }
   .batch-row button { background: none; border: none; color: #756c5a; font-size: 20px; cursor: pointer; min-width: 36px; min-height: 36px; }
@@ -75,16 +75,11 @@
   const API = 'api';
   let token = localStorage.getItem('volunteer_token');
   let user = JSON.parse(localStorage.getItem('volunteer_user') || 'null');
-  // Check-in is disabled for this push - not linked from the tab bar, and
-  // its ?tab=checkin URL entry point is commented out below along with the
-  // rest of the check-in code (see the CHECK-IN section further down).
-  // const urlParams = new URLSearchParams(location.search);
-  let tab = 'allocation'; // 'allocation' | 'reassign' | 'view' (checkin disabled - see below)
+  let tab = 'allocation'; // 'allocation' | 'reassign' | 'view'
 
-  // Which of this login's hubs everything (allocation, standby, check-in) is
-  // currently attributed to - chosen right after signing in, not as part of
-  // the sign-in form itself. A login with one hub never shows this bar and
-  // is just that hub, same as before this login could cover more than one.
+  // Which of this login's hubs allocation/standby is currently attributed
+  // to - chosen right after signing in, not as part of the sign-in form
+  // itself. A login with one hub never shows this bar and is just that hub.
   let activeHubId = null;
   function initActiveHub() {
     if (!user || !user.hubs || !user.hubs.length) { activeHubId = null; return; }
@@ -110,14 +105,6 @@
 
   // ---- View Ticket state ----
   let viewedTicket = null;
-
-  // ---- Ticket Check-in Scan state - disabled for this push, see the
-  // commented-out CHECK-IN section further down:
-  // let checkinSubTab = 'depart'; // 'depart' (O1: Send to Central) | 'arrive' (R2: Bus Arrived)
-  // let checkinTrips = [];
-  // let activeCheckinTripId = null;
-  // let showNewTripForm = false;
-  // let arrivalTrips = [];
 
   let audioCtx = null;
   let activeScanner = null;
@@ -227,6 +214,7 @@
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 2400);
   }
+
   async function api(path, options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
@@ -386,7 +374,7 @@
   function logout() {
     stopActiveScanner();
     localStorage.removeItem('volunteer_token'); localStorage.removeItem('volunteer_user');
-    token = null; user = null; batch = []; currentTicket = null; viewedTicket = null; activeCheckinTripId = null;
+    token = null; user = null; batch = []; currentTicket = null; viewedTicket = null;
     activeHubId = null;
     renderLogin();
   }
@@ -405,9 +393,6 @@
           <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Allocate Ticket</div>
           <div class="tab ${tab === 'view' ? 'active' : ''}" data-tab="view">View Ticket</div>
           <div class="tab ${tab === 'reassign' ? 'active' : ''}" data-tab="reassign">Update Ticket</div>
-          <!-- Check-in Scan tab hidden for now - uncomment to bring it back:
-          <div class="tab ${tab === 'checkin' ? 'active' : ''}" data-tab="checkin">Check-in</div>
-          -->
         </div>
         <div id="dynamicArea">${bodyHtml}</div>
       </main>
@@ -1087,8 +1072,7 @@
   function renderCurrentTab() {
     if (tab === 'allocation') renderAllocationTab();
     else if (tab === 'reassign') renderReassignTab();
-    else if (tab === 'view') renderViewTab();
-    else renderCheckinTab();
+    else renderViewTab();
   }
 
   function boot() {
