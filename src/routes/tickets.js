@@ -116,8 +116,10 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
     jsonError('code is required', 400);
   }
   const { rows } = await pool.query(
-    `SELECT t.*, ts.departure_time, ts.capacity AS slot_capacity
-     FROM tickets t LEFT JOIN timeslots ts ON t.timeslot_id = ts.id
+    `SELECT t.*, ts.departure_time, ts.capacity AS slot_capacity, h.name AS hub_name
+     FROM tickets t
+     LEFT JOIN timeslots ts ON t.timeslot_id = ts.id
+     JOIN hubs h ON t.hub_id = h.id
      WHERE t.code = $1`,
     [code]
   );
@@ -131,6 +133,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
   res.json({
     code: ticket.code,
     hubId: ticket.hub_id,
+    hubName: ticket.hub_name,
     timeslotId: ticket.timeslot_id !== null ? ticket.timeslot_id : null,
     departureTime: ticket.departure_time,
     isStandby: ticket.is_standby,

@@ -392,7 +392,6 @@
   }
 
   function renderShell(bodyHtml) {
-    const showHubBar = user.hubs && user.hubs.length > 1;
     document.getElementById('app').innerHTML = `
       <header>
         <div><div class="title"><span class="not-live">NOT LIVE</span>${icon('ticket', 18)} Ticketing - ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
@@ -402,14 +401,6 @@
         </div>
       </header>
       <main>
-        ${showHubBar ? `
-          <div class="card" style="padding:10px 14px;margin-bottom:10px;">
-            <label style="margin-bottom:6px;">Selling for</label>
-            <select id="hubSwitcher" style="margin-bottom:0;">
-              ${user.hubs.map(h => `<option value="${h.id}" ${h.id === activeHubId ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}
-            </select>
-          </div>
-        ` : ''}
         <div class="tabs">
           <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Allocate Ticket</div>
           <div class="tab ${tab === 'view' ? 'active' : ''}" data-tab="view">View Ticket</div>
@@ -422,14 +413,6 @@
       </main>
     `;
     document.getElementById('logoutBtn').onclick = logout;
-    const switcher = document.getElementById('hubSwitcher');
-    if (switcher) {
-      switcher.onchange = () => {
-        stopActiveScanner();
-        setActiveHub(switcher.value);
-        renderCurrentTab();
-      };
-    }
     document.querySelectorAll('.tab').forEach(el => {
       el.onclick = () => {
         stopActiveScanner();
@@ -551,12 +534,21 @@
   // ---- Step 2: pick a time, then explicitly confirm ----
   async function renderSelectStep() {
     const validCodes = batch.filter(b => b.valid).map(b => b.code);
+    const showHubPicker = user.hubs && user.hubs.length > 1;
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Back to scanning</button>
       <div class="card" style="text-align:center;">
         <div class="big-count">${validCodes.length}</div>
         <div class="cap-label">ticket(s) ready to sell</div>
       </div>
+      ${showHubPicker ? `
+        <div class="card" style="padding:10px 14px;">
+          <label style="margin-bottom:6px;">Selling for</label>
+          <select id="hubSwitcher" style="margin-bottom:0;">
+            ${user.hubs.map(h => `<option value="${h.id}" ${h.id === activeHubId ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}
+          </select>
+        </div>
+      ` : ''}
       <div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>
       <button class="btn btn-primary" id="confirmBtn" disabled style="opacity:0.4; margin-top:4px;">Confirm Sale</button>
     `);
@@ -566,6 +558,20 @@
       allocStep = 'scan';
       renderScanStep();
     };
+    const switcher = document.getElementById('hubSwitcher');
+    if (switcher) {
+      switcher.onchange = () => {
+        setActiveHub(switcher.value);
+        // Timeslots are hub-specific, so any prior pick no longer applies.
+        selectedTimeslotId = null;
+        selectedStandby = false;
+        const confirmBtn = document.getElementById('confirmBtn');
+        confirmBtn.disabled = true;
+        confirmBtn.style.opacity = '0.4';
+        document.getElementById('timeslotCard').innerHTML = '<div class="empty">Loading available times…</div>';
+        loadTimeslotsForSale(validCodes.length);
+      };
+    }
     document.getElementById('confirmBtn').onclick = () => {
       if (selectedStandby) finalizeSale({ standby: true });
       else if (selectedTimeslotId !== null) finalizeSale({ timeslotId: selectedTimeslotId });
@@ -716,6 +722,7 @@
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
         <div class="ticket-code">${escapeHtml(t.code)}</div>
+        <div class="cap-label" style="margin-top:8px;">${escapeHtml(t.hubName)}</div>
         ${statusBlock}
       </div>
       ${showPicker ? '<div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>' : ''}
