@@ -35,6 +35,7 @@ DATABASE_MIGRATION_BEHAVIOR=WARN
 ```
 $ npm run db:migrate
 ```
+*(Note: If the migration contains intentionally destructive DDL and was not bypassed via a comment inside the SQL file, you can force execution by running `ALLOW_DESTRUCTIVE_MIGRATIONS=true npm run db:migrate` or `npm run db:migrate -- -f`.)*
 
 5. setup the service definition
 ```
