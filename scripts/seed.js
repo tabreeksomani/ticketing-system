@@ -23,10 +23,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-// Reuses the server's own pool/schema-creation instead of assuming the
-// tables already exist - on a genuinely fresh database (e.g. a just-started
-// Docker container), nothing has created them yet until this runs `ready()`.
-const { pool, ready } = require('../src/db');
+const { pool } = require('../src/db');
 
 const file = process.argv[2];
 if (!file) {
@@ -39,7 +36,6 @@ function slugify(name) {
 }
 
 async function main() {
-  await ready();
   const data = JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'));
 
   try {

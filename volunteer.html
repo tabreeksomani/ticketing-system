@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
-<title>Volunteer — Ticketing</title>
+<title>Ticketing</title>
 <script src="vendor/jsQR.js"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -11,7 +11,9 @@
   header { position: sticky; top: 0; z-index: 5; background: #FFFFFF; border-bottom: 1px solid #E8E1D3; padding: max(14px, env(safe-area-inset-top)) 16px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   header .title { font-weight: 800; font-size: 16px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
   header .sub { font-size: 11px; color: #756c5a; }
-  header button { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 9px 12px; cursor: pointer; min-height: 40px; }
+  .not-live { display: inline-block; background: #C62828; color: #FFFFFF; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; padding: 2px 6px; border-radius: 5px; margin-right: 6px; vertical-align: middle; }
+  header button, header #homeBtn { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 9px 12px; cursor: pointer; min-height: 40px; }
+  header #homeBtn { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
   main { padding: 14px; max-width: 480px; margin: 0 auto; padding-bottom: 40px; }
   .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
   .tab { flex: 1; text-align: center; padding: 11px 4px; border-radius: 10px; background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; cursor: pointer; font-size: 12px; font-weight: 700; min-height: 44px; display: flex; align-items: center; justify-content: center; }
@@ -49,7 +51,8 @@
   .toast { position: fixed; top: calc(66px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 40; max-width: 92%; text-align: center; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
   .toast-error { background: #FEE2E2; border: 1px solid #FCA5A5; color: #B91C1C; }
   .toast-success { background: #DCFCE7; border: 1px solid #86EFAC; color: #166534; }
-  .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; position: relative; overflow: hidden; }
+  .login-screen { min-height: 100vh; display: flex; flex-direction: column; }
+  .login-wrap { display: flex; align-items: center; justify-content: center; flex: 1; padding: 20px; position: relative; overflow: hidden; }
   .brand-watermark { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 460px; max-width: 160%; opacity: 0.14; pointer-events: none; z-index: 0; }
   .login-card { position: relative; z-index: 1; max-width: 360px; width: 100%; }
   .login-card h1 { font-size: 18px; margin: 0 0 4px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
@@ -117,16 +120,40 @@
     return typeof code === 'string' && code.startsWith('MQEBC');
   }
 
-  // Canonical ticket number: strips the "MQEBC" prefix and zero padding
-  // (e.g. "MQEBC00042" -> "42"). This is applied both to what the volunteer
-  // sees AND to the code the moment it's scanned/typed, so the bare number is
-  // what gets held in state and sent to the backend. Anything without the
-  // expected prefix is passed through verbatim. Mirrors normalizeCode() on the
-  // server, which normalizes again defensively.
-  function formatTicketCode(code) {
-    if (typeof code !== 'string' || !/^MQEBC/i.test(code)) return code;
-    const rest = code.slice(5).replace(/^0+/, '');
-    return rest || '0';
+  // A demo'ers device gets one random prefix, generated the first time it's
+  // needed and kept in localStorage so it stays stable for this browser but
+  // distinct from every other demo'ers. It lets demo'ers exercise the scan flow
+  // with codes that can't collide with each other or with real ticket numbers.
+  // The trailing "-" just separates the prefix from the ticket number.
+  function demoPrefix() {
+    let p = localStorage.getItem('demo_prefix');
+    if (!p) {
+      const bytes = crypto.getRandomValues(new Uint8Array(4));
+      p = 'T' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') + '-';
+      localStorage.setItem('demo_prefix', p);
+    }
+    return p;
+  }
+
+  // Turns a raw scanned/typed code into its canonical form - the single value
+  // that's held in state, sent to the backend, and displayed. Strips the
+  // "MQEBC" prefix and zero padding (e.g. "MQEBC00042" -> "42"); anything
+  // without that prefix is passed through verbatim. Mirrors normalizeCode() on
+  // the server, which normalizes again defensively.
+  //
+  // For demo'ers it also prepends a browser-specific prefix, isolating their
+  // test tickets. The server stores/returns that prefixed code untouched, so
+  // it's already canonical everywhere downstream.
+  //
+  // IMPORTANT: call this exactly once, at the input boundary (scan/manual
+  // entry). Everything after - state, batch entries, API responses - already
+  // holds the canonical code, so re-running it would double the demo prefix
+  // (e.g. "T6cbbd3a0-T6cbbd3a0-0"). Render those codes as-is.
+  function canonicalizeCode(code, user) {
+    if (typeof code !== 'string') return code;
+    const bare = /^MQEBC/i.test(code) ? code.slice(5).replace(/^0+/, '') || '0' : code;
+    if (user && user.id === 'demo') return demoPrefix() + bare;
+    return bare;
   }
 
   // departureTime is stored as free-form text (whatever was typed in via psql
@@ -155,7 +182,8 @@
     check: '<path d="M5 13l4 4L19 7"/>',
     close: '<path d="M6 6l12 12M18 6 6 18"/>',
     swap: '<path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/>',
-    bus: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 11h18M8 6v5M16 6v5"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="16.5" cy="19" r="1.5"/>',
+    bus: '<path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/>',
+    home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11h14V9"/>',
   };
   function icon(name, size) {
     size = size || 16;
@@ -311,8 +339,13 @@
     let logins = [];
     try { logins = await api('/auth/login-ids?role=volunteer'); } catch (e) { /* login form still renders; submit will surface the error */ }
     document.getElementById('app').innerHTML = `
+      <div class="login-screen">
+      <header>
+        <div class="title"><span class="not-live">NOT LIVE</span>${icon('ticket', 18)} Ticketing</div>
+        <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
+      </header>
       <div class="login-wrap"><img class="brand-watermark" src="vendor/brand-mark.svg" alt="" /><div class="card login-card">
-        <h1>${icon('ticket', 20)} Volunteer</h1>
+        <h1>${icon('ticket', 20)} Ticketing</h1>
         <div class="sub">Choose your login and enter its password to continue.</div>
         <label>Login</label>
         <select id="loginHub">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.id)}</option>`).join('')}</select>
@@ -320,6 +353,7 @@
         <input id="loginPass" type="password" />
         <button class="btn btn-primary" id="loginBtn">Sign in</button>
       </div></div>
+      </div>
     `;
     document.getElementById('loginBtn').onclick = async () => {
       unlockAudio();
@@ -346,21 +380,15 @@
   }
 
   function renderShell(bodyHtml) {
-    const showHubBar = user.hubs && user.hubs.length > 1;
     document.getElementById('app').innerHTML = `
       <header>
-        <div><div class="title">${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
-        <button id="logoutBtn">Sign out</button>
+        <div><div class="title"><span class="not-live">NOT LIVE</span>${icon('ticket', 18)} Ticketing - ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
+        <div style="display:flex;gap:8px;">
+          <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
+          <button id="logoutBtn">Sign out</button>
+        </div>
       </header>
       <main>
-        ${showHubBar ? `
-          <div class="card" style="padding:10px 14px;margin-bottom:10px;">
-            <label style="margin-bottom:6px;">Selling for</label>
-            <select id="hubSwitcher" style="margin-bottom:0;">
-              ${user.hubs.map(h => `<option value="${h.id}" ${h.id === activeHubId ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}
-            </select>
-          </div>
-        ` : ''}
         <div class="tabs">
           <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Allocate Ticket</div>
           <div class="tab ${tab === 'view' ? 'active' : ''}" data-tab="view">View Ticket</div>
@@ -370,14 +398,6 @@
       </main>
     `;
     document.getElementById('logoutBtn').onclick = logout;
-    const switcher = document.getElementById('hubSwitcher');
-    if (switcher) {
-      switcher.onchange = () => {
-        stopActiveScanner();
-        setActiveHub(switcher.value);
-        renderCurrentTab();
-      };
-    }
     document.querySelectorAll('.tab').forEach(el => {
       el.onclick = () => {
         stopActiveScanner();
@@ -437,7 +457,7 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code); // canonical bare number from here on
+    code = canonicalizeCode(code, user); // canonical code from here on
     if (batch.some(b => b.code === code)) {
       feedback(false);
       showToast('Already scanned in this batch');
@@ -457,7 +477,7 @@
       // just surface the reason and move on.
       if (!result.valid) {
         feedback(false);
-        showToast(`${formatTicketCode(code)}: ${result.reason}`);
+        showToast(`${code}: ${result.reason}`);
         return;
       }
       batch.push({ code, valid: true, reason: null });
@@ -475,7 +495,7 @@
       <div class="card"><div class="batch-list">
         ${batch.map((b, i) => `
           <div class="batch-row ${b.valid ? '' : 'reject-row'}">
-            <span>${escapeHtml(formatTicketCode(b.code))}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
+            <span>${escapeHtml(b.code)}${b.valid ? '' : ' — ' + escapeHtml(b.reason)}</span>
             <button data-remove="${i}">${icon('close', 14)}</button>
           </div>
         `).join('')}
@@ -499,12 +519,21 @@
   // ---- Step 2: pick a time, then explicitly confirm ----
   async function renderSelectStep() {
     const validCodes = batch.filter(b => b.valid).map(b => b.code);
+    const showHubPicker = user.hubs && user.hubs.length > 1;
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Back to scanning</button>
       <div class="card" style="text-align:center;">
         <div class="big-count">${validCodes.length}</div>
         <div class="cap-label">ticket(s) ready to sell</div>
       </div>
+      ${showHubPicker ? `
+        <div class="card" style="padding:10px 14px;">
+          <label style="margin-bottom:6px;">Selling for</label>
+          <select id="hubSwitcher" style="margin-bottom:0;">
+            ${user.hubs.map(h => `<option value="${h.id}" ${h.id === activeHubId ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}
+          </select>
+        </div>
+      ` : ''}
       <div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>
       <button class="btn btn-primary" id="confirmBtn" disabled style="opacity:0.4; margin-top:4px;">Confirm Sale</button>
     `);
@@ -514,6 +543,20 @@
       allocStep = 'scan';
       renderScanStep();
     };
+    const switcher = document.getElementById('hubSwitcher');
+    if (switcher) {
+      switcher.onchange = () => {
+        setActiveHub(switcher.value);
+        // Timeslots are hub-specific, so any prior pick no longer applies.
+        selectedTimeslotId = null;
+        selectedStandby = false;
+        const confirmBtn = document.getElementById('confirmBtn');
+        confirmBtn.disabled = true;
+        confirmBtn.style.opacity = '0.4';
+        document.getElementById('timeslotCard').innerHTML = '<div class="empty">Loading available times…</div>';
+        loadTimeslotsForSale(validCodes.length);
+      };
+    }
     document.getElementById('confirmBtn').onclick = () => {
       if (selectedStandby) finalizeSale({ standby: true });
       else if (selectedTimeslotId !== null) finalizeSale({ timeslotId: selectedTimeslotId });
@@ -552,7 +595,7 @@
       card.innerHTML = `<label>Tap a departure time (${needed} ticket${needed > 1 ? 's' : ''})</label>` +
         usable.map(t => `
           <div class="pill ${selectedTimeslotId === t.id ? 'selected' : ''}" data-slot="${t.id}">
-            <div><div class="name">${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
+            <div><div class="name" style="display:flex;align-items:center;gap:7px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 16)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
             <div>${selectedTimeslotId === t.id ? icon('check', 16) : icon('arrowRight', 16)}</div>
           </div>
         `).join('');
@@ -629,10 +672,14 @@
       showToast('Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code); // canonical bare number from here on
+    code = canonicalizeCode(code, user); // canonical code from here on
     try {
       const ticket = await api('/tickets/lookup?code=' + encodeURIComponent(code));
       feedback(true);
+      // Hold on the camera view briefly so the scanner's capture flash is
+      // visible before we navigate to the result. Manual entry has no flash,
+      // so skip the wait.
+      if (fromCamera) await new Promise(r => setTimeout(r, 700));
       stopActiveScanner();
       currentTicket = ticket;
       renderTicketStep();
@@ -653,13 +700,14 @@
       statusBlock = '<div class="notice notice-warn">This ticket has already boarded a bus and can no longer be switched.</div>';
       showPicker = false;
     } else {
-      statusBlock = `<div class="cap-label">Currently: ${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
+      statusBlock = `<div class="cap-label" style="display:flex;align-items:center;justify-content:center;gap:6px;">Currently: <span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
     }
 
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
-        <div class="ticket-code">${escapeHtml(formatTicketCode(t.code))}</div>
+        <div class="ticket-code">${escapeHtml(t.code)}</div>
+        <div class="cap-label" style="margin-top:8px;">${escapeHtml(t.hubName)}</div>
         ${statusBlock}
       </div>
       ${showPicker ? '<div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>' : ''}
@@ -692,7 +740,7 @@
     }
     card.innerHTML = `<label>Choose a new departure time</label>` + options.map(t => `
       <div class="pill ${selectedReassignSlotId === t.id ? 'selected' : ''}" data-slot="${t.id}">
-        <div><div class="name">${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
+        <div><div class="name" style="display:flex;align-items:center;gap:7px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 16)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
         <div>${icon('arrowRight', 16)}</div>
       </div>
     `).join('');
@@ -714,7 +762,7 @@
         body: JSON.stringify({ code: currentTicket.code, timeslotId: selectedReassignSlotId }),
       });
       feedback(true);
-      showToast(`${formatTicketCode(result.code)} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
+      showToast(`${result.code} switched to ${formatDepartureTime(result.departureTime)}`, 'success');
       renderLookupStep();
     } catch (e) {
       feedback(false);
@@ -751,20 +799,26 @@
       document.getElementById('viewVideo'),
       document.getElementById('viewStatus'),
       document.getElementById('viewFrame'),
-      (code) => handleView(code)
+      (code) => handleView(code, true)
     );
   }
 
-  async function handleView(code) {
+  async function handleView(code, fromCamera) {
     if (!code) return;
-    if (!isValidTicketCode(code)) {
+    // Prefix guard is camera-only (see handleScan); manual lookup bypasses it.
+    if (fromCamera && !isValidTicketCode(code)) {
       feedback(false);
       showToast('Not a valid ticket code');
       return;
     }
+    code = canonicalizeCode(code, user); // canonical code from here on
     try {
       const ticket = await api('/tickets/view?code=' + encodeURIComponent(code));
       feedback(true);
+      // Hold on the camera view briefly so the scanner's capture flash is
+      // visible before we navigate to the result. Manual entry has no flash,
+      // so skip the wait.
+      if (fromCamera) await new Promise(r => setTimeout(r, 700));
       stopActiveScanner();
       viewedTicket = ticket;
       renderViewResultStep();
@@ -780,7 +834,7 @@
     if (t.isStandby) {
       statusBlock = '<div class="notice notice-warn">This is a standby ticket - not tied to a timeslot.</div>';
     } else {
-      statusBlock = `<div class="cap-label">${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
+      statusBlock = `<div class="cap-label" style="display:flex;align-items:center;justify-content:center;gap:6px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
     }
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
@@ -792,6 +846,227 @@
       </div>
     `);
     document.getElementById('backBtn').onclick = () => renderViewLookupStep();
+  }
+
+  // ========================================================== CHECK-IN ====
+  // Hub role covers two of the four legs: O1 (create/board/depart a trip
+  // to Central) and R2 (mark a bus arrived once it's back from Central -
+  // R2's validation already happened when Central boarded it, so arrival
+  // here is plate-only, no re-scan).
+  function checkinSubNavHtml() {
+    return `
+      <div class="tabs" style="margin-bottom:10px;">
+        <div class="tab ${checkinSubTab === 'depart' ? 'active' : ''}" data-subtab="depart">Send to Central</div>
+        <div class="tab ${checkinSubTab === 'arrive' ? 'active' : ''}" data-subtab="arrive">Bus Arrived</div>
+      </div>
+    `;
+  }
+  function wireCheckinSubNav() {
+    document.querySelectorAll('[data-subtab]').forEach(el => {
+      el.onclick = () => {
+        stopActiveScanner();
+        checkinSubTab = el.dataset.subtab;
+        renderCheckinTab();
+      };
+    });
+  }
+
+  async function renderCheckinTab() {
+    if (checkinSubTab === 'arrive') { renderCheckinArrivalsTab(); return; }
+
+    renderShell(checkinSubNavHtml() + `<div class="card"><div class="empty">Loading trips…</div></div>`);
+    wireCheckinSubNav();
+    try {
+      checkinTrips = await api('/trips?leg=O1&side=origin&origin=' + encodeURIComponent(activeHubId));
+    } catch (e) { showToast(e.message); return; }
+
+    activeCheckinTripId = null;
+    renderCheckinTripPicker();
+  }
+
+  function renderCheckinTripPicker() {
+    renderShell(checkinSubNavHtml() + `
+      ${checkinTrips.length ? `
+        <div class="card">
+          <h2 class="section" style="font-size:11px;text-transform:uppercase;color:#756c5a;margin:0 0 10px;">Trips</h2>
+          ${checkinTrips.map(t => {
+            const isOpen = t.status !== 'arrived';
+            return `
+            <div class="pill" ${isOpen ? `data-trip="${t.id}"` : 'style="cursor:default;opacity:0.7;"'}>
+              <div><div class="name">${escapeHtml(t.licensePlate)}</div><div class="meta">${t.onboard} onboard</div></div>
+              <div class="bus-status status-${t.status}">${t.status}</div>
+            </div>
+          `;
+          }).join('')}
+        </div>
+      ` : '<div class="card"><div class="empty">No trips yet for this hub.</div></div>'}
+      <button class="btn btn-primary" id="newTripBtn">${icon('bus', 15)} New Trip</button>
+      ${showNewTripForm ? `
+        <div class="card" style="margin-top:10px;">
+          <label>License Plate</label>
+          <input id="newTripPlate" autocomplete="off" placeholder="e.g. BC 1234" />
+          <button class="btn btn-primary" id="createTripBtn">Create Trip</button>
+        </div>
+      ` : ''}
+    `);
+    wireCheckinSubNav();
+    document.querySelectorAll('[data-trip]').forEach(el => {
+      el.onclick = () => {
+        activeCheckinTripId = parseInt(el.dataset.trip, 10);
+        renderCheckinBoardingScreen();
+      };
+    });
+    document.getElementById('newTripBtn').onclick = () => {
+      showNewTripForm = !showNewTripForm;
+      renderCheckinTripPicker();
+      if (showNewTripForm) document.getElementById('newTripPlate').focus();
+    };
+    const createBtn = document.getElementById('createTripBtn');
+    if (createBtn) createBtn.onclick = async () => {
+      const licensePlate = document.getElementById('newTripPlate').value.trim();
+      if (!licensePlate) return;
+      try {
+        const trip = await api('/trips', { method: 'POST', body: JSON.stringify({ leg: 'O1', licensePlate, origin: activeHubId }) });
+        feedback(true);
+        showNewTripForm = false;
+        checkinTrips = [...checkinTrips, trip];
+        activeCheckinTripId = trip.id;
+        renderCheckinBoardingScreen();
+      } catch (e) { showToast(e.message); }
+    };
+  }
+
+  function renderCheckinBoardingScreen() {
+    const trip = checkinTrips.find(t => t.id === activeCheckinTripId);
+    const canBoard = trip.status === 'scheduled' || trip.status === 'boarding';
+    const canDepart = trip.status === 'boarding';
+    // Normally Central confirms arrival, but the volunteer who departed this
+    // bus may be riding along with it - let them confirm it themselves too.
+    const canArrive = trip.status === 'departed';
+    renderShell(checkinSubNavHtml() + `
+      <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} All trips</button>
+      <div class="card">
+        <div class="big-count" id="onboardCount">${trip.onboard}</div>
+        <div class="cap-label">onboard · ${escapeHtml(trip.licensePlate)} · <span class="bus-status status-${trip.status}">${trip.status}</span></div>
+      </div>
+      ${canBoard ? scannerCardHtml('board') : `<div class="card"><div class="empty">This trip has departed for Central.</div></div>`}
+      ${canBoard ? `
+        <button class="manual-toggle" id="manualToggle">Enter code manually instead</button>
+        <div id="manualWrap" style="display:none;">
+          <div class="card"><input id="boardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
+        </div>
+      ` : ''}
+      ${canDepart ? `<button class="btn btn-danger" id="departBtn">Complete &amp; Depart</button>` : ''}
+      ${canArrive ? `<button class="btn btn-primary" id="arriveBtn">Mark Arrived at Central</button>` : ''}
+    `);
+    wireCheckinSubNav();
+
+    document.getElementById('backBtn').onclick = () => {
+      stopActiveScanner();
+      activeCheckinTripId = null;
+      renderCheckinTab();
+    };
+
+    if (canBoard) {
+      wireManualToggle('manualToggle', 'manualWrap', 'boardInput');
+      document.getElementById('boardInput').addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        const input = e.target;
+        await handleCheckinBoard(input.value.trim());
+        input.value = '';
+        input.focus();
+      });
+      startCameraScanner(
+        document.getElementById('boardVideo'),
+        document.getElementById('boardStatus'),
+        document.getElementById('boardFrame'),
+        (code) => handleCheckinBoard(code, true)
+      );
+    }
+
+    const departBtn = document.getElementById('departBtn');
+    if (departBtn) departBtn.onclick = async () => {
+      if (!confirm('Mark this trip as departed? No more check-ins will be allowed after this.')) return;
+      try {
+        stopActiveScanner();
+        await api(`/trips/${activeCheckinTripId}/depart`, { method: 'POST' });
+        feedback(true);
+        showToast('Trip marked departed', 'success');
+        activeCheckinTripId = null;
+        renderCheckinTab();
+      } catch (e) { showToast(e.message); }
+    };
+
+    const arriveBtn = document.getElementById('arriveBtn');
+    if (arriveBtn) arriveBtn.onclick = async () => {
+      try {
+        await api(`/trips/${activeCheckinTripId}/arrive`, { method: 'POST' });
+        feedback(true);
+        showToast('Trip marked arrived at Central', 'success');
+        activeCheckinTripId = null;
+        renderCheckinTab();
+      } catch (e) { showToast(e.message); }
+    };
+  }
+
+  async function handleCheckinBoard(code, fromCamera) {
+    if (!code) return;
+    // Prefix guard is camera-only (see handleScan); manual entry bypasses it.
+    if (fromCamera && !isValidTicketCode(code)) {
+      feedback(false);
+      showToast('Not a valid ticket code');
+      return;
+    }
+    code = canonicalizeCode(code, user); // canonical code from here on
+    try {
+      const updated = await api(`/trips/${activeCheckinTripId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
+      checkinTrips = checkinTrips.map(t => (t.id === activeCheckinTripId ? updated : t));
+      feedback(true);
+      document.getElementById('onboardCount').textContent = updated.onboard;
+      if (updated.issuedStandby) {
+        showToast(`${code} — new standby ticket issued & checked in`, 'success');
+      } else {
+        showToast(`${code} checked in`, 'success');
+      }
+    } catch (e) {
+      feedback(false);
+      showToast(e.message);
+    }
+  }
+
+  // ---- R2: Bus Arrived (plate-match only, no scanning - validation
+  // already happened when Central boarded each ticket) ----
+  async function renderCheckinArrivalsTab() {
+    renderShell(checkinSubNavHtml() + `<div class="card"><div class="empty">Loading arrivals…</div></div>`);
+    wireCheckinSubNav();
+    try {
+      arrivalTrips = await api('/trips?leg=R2&side=arrival&destination=' + encodeURIComponent(activeHubId));
+    } catch (e) { showToast(e.message); return; }
+    renderCheckinArrivalsList();
+  }
+
+  function renderCheckinArrivalsList() {
+    renderShell(checkinSubNavHtml() + `
+      ${arrivalTrips.length ? arrivalTrips.map(t => `
+        <div class="pill" data-arrive="${t.id}">
+          <div><div class="name">${escapeHtml(t.licensePlate)}</div><div class="meta">${t.onboard} onboard</div></div>
+          <div>${icon('arrowRight', 16)}</div>
+        </div>
+      `).join('') : '<div class="card"><div class="empty">No buses en route from Central right now.</div></div>'}
+    `);
+    wireCheckinSubNav();
+    document.querySelectorAll('[data-arrive]').forEach(el => {
+      el.onclick = async () => {
+        const tripId = parseInt(el.dataset.arrive, 10);
+        try {
+          await api(`/trips/${tripId}/arrive`, { method: 'POST' });
+          feedback(true);
+          showToast('Bus marked arrived', 'success');
+          arrivalTrips = arrivalTrips.filter(t => t.id !== tripId);
+          renderCheckinArrivalsList();
+        } catch (e) { showToast(e.message); }
+      };
+    });
   }
 
   function renderCurrentTab() {
@@ -807,5 +1082,6 @@
   }
   boot();
 </script>
+<script src="src/footer.js"></script>
 </body>
 </html>

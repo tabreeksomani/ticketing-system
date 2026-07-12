@@ -1,6 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
-const { requireRole } = require('../auth');
+const { requireAuth, requireRole } = require('../auth');
 const { jsonError, asyncHandler } = require('../errors');
 const { normalizeCode } = require('../util');
 
@@ -110,14 +110,16 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
 
 // Looks up a ticket's current status, for the ticket update/reassignment page.
 router.get('/tickets/lookup', asyncHandler(async (req, res) => {
-  const user = await requireRole(req, ['volunteer', 'admin']);
+  const user = await requireAuth(req);
   const code = normalizeCode(req.query.code);
   if (code === '') {
     jsonError('code is required', 400);
   }
   const { rows } = await pool.query(
-    `SELECT t.*, ts.departure_time, ts.capacity AS slot_capacity
-     FROM tickets t LEFT JOIN timeslots ts ON t.timeslot_id = ts.id
+    `SELECT t.*, ts.departure_time, ts.capacity AS slot_capacity, h.name AS hub_name
+     FROM tickets t
+     LEFT JOIN timeslots ts ON t.timeslot_id = ts.id
+     JOIN hubs h ON t.hub_id = h.id
      WHERE t.code = $1`,
     [code]
   );
@@ -131,6 +133,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
   res.json({
     code: ticket.code,
     hubId: ticket.hub_id,
+    hubName: ticket.hub_name,
     timeslotId: ticket.timeslot_id !== null ? ticket.timeslot_id : null,
     departureTime: ticket.departure_time,
     isStandby: ticket.is_standby,
@@ -144,7 +147,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
 // check here, since this is just "what hub/time is this ticket for," not an
 // action that needs to be scoped to the caller's own hub.
 router.get('/tickets/view', asyncHandler(async (req, res) => {
-  await requireRole(req, ['volunteer', 'admin']);
+  await requireAuth(req);
   const code = normalizeCode(req.query.code);
   if (code === '') {
     jsonError('code is required', 400);

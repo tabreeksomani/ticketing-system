@@ -43,6 +43,7 @@ router.post('/login', asyncHandler(async (req, res) => {
     return res.json({ token, user: { role: login.role, id: login.id, hubIds, hubs } });
   }
 
+  /* disable no password "tester" access
   if (login && secret == '') {
     const hubs = await hubsForLogin(login.id);
     const hubIds = hubs.map((h) => h.id);
@@ -52,6 +53,7 @@ router.post('/login', asyncHandler(async (req, res) => {
     });
     return res.json({ token, user: { role: 'tester', id: login.id, hubIds, hubs } });
   }
+  */
 
   await rateLimitRecordFailure(bucket);
   jsonError('Invalid id or secret', 401);

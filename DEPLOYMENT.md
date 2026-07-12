@@ -26,8 +26,18 @@ DATABASE_SSL=true
 DATABASE_CA_CERT=./global-bundle.pem
 PORT=80
 APP_DEBUG=0
+
+# Behavior when server starts with unapplied migrations (WARN, KILL, IGNORE)
+DATABASE_MIGRATION_BEHAVIOR=WARN
 ```
-4. setup the service definition
+
+4. Apply Database Migrations (Only needed once per schema release, not for every instance scale-out):
+```
+$ npm run db:migrate
+```
+*(Note: If the migration contains intentionally destructive DDL and was not bypassed via a comment inside the SQL file, you can force execution by running `ALLOW_DESTRUCTIVE_MIGRATIONS=true npm run db:migrate` or `npm run db:migrate -- -f`.)*
+
+5. setup the service definition
 ```
 # /etc/systemd/system/mulaqatexpress.service
 [Unit]
@@ -41,10 +51,15 @@ Restart=always
 User=ec2-user
 Environment=NODE_ENV=production
 
+# Redirect output to log file for CloudWatch Agent collection
+StandardOutput=append:/var/log/mulaqatexpress/app.log
+StandardError=append:/var/log/mulaqatexpress/app.log
+LogsDirectory=mulaqatexpress
+
 [Install]
 WantedBy=multi-user.target
 ```
-5. finally, run the service
+6. finally, run the service
 ```
 $ sudo systemctl daemon-reload
 $ sudo systemctl restart mulaqatexpress
@@ -56,3 +71,32 @@ $ sudo systemctl status mulaqatexpress
 2. select ours, then open "Register Targets"
 3. click the new instance in "Available Instances", and then "Include as pending below", and finally "Register .."
 4. the dashboard should now reflect a new "Healthy" instance
+
+### CloudWatch Logs Integration
+
+To stream application logs to AWS CloudWatch Logs, configure the Amazon CloudWatch Agent on each EC2 instance:
+
+1. **IAM Policy Requirement**:
+   Attach the AWS-managed policy **`CloudWatchAgentServerPolicy`** to the EC2 instance's IAM Role (Instance Profile) so it has write permissions to CloudWatch Logs.
+
+2. **Install the CloudWatch Agent**:
+   On the host machine:
+   ```bash
+   $ sudo yum install amazon-cloudwatch-agent
+   ```
+
+3. **Deploy the Agent Configuration**:
+   Copy the provided agent configuration file to the agent config folder:
+   ```bash
+   $ sudo cp aws/amazon-cloudwatch-agent.json /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+   ```
+
+4. **Start & Enable the Agent**:
+   ```bash
+   $ sudo systemctl enable amazon-cloudwatch-agent
+   $ sudo systemctl restart amazon-cloudwatch-agent
+   $ sudo systemctl status amazon-cloudwatch-agent
+   ```
+
+5. **Viewing Logs**:
+   The agent will stream output in real-time. Logs can be viewed in the AWS CloudWatch Console under the log group **`mulaqat-express-logs`** with stream name matching the instance hostname.

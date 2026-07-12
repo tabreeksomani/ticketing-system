@@ -1,0 +1,20 @@
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "cwagent"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/mulaqatexpress/app.log",
+            "log_group_name": "mulaqat-express-logs",
+            "log_stream_name": "{hostname}",
+            "retention_in_days": 30
+          }
+        ]
+      }
+    }
+  }
+}

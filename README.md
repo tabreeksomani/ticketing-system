@@ -199,6 +199,81 @@ than the browser's Shape Detection API, since that API doesn't exist on iOS Safa
   always same-origin — no `Access-Control-Allow-Origin` header is sent at all.
 - Error responses never leak internal detail unless `APP_DEBUG=1` is explicitly set.
 
+## Health Check
+
+The app provides a health check endpoint at `/health` (and `/api/health`) that reports the application and database connectivity status.
+* **Status Codes**: Returns `200 OK` if the system is fully operational, or `503 Service Unavailable` if the database is down or connection timeouts occur.
+* **Caching (60s TTL)**: To prevent load balancer pings from overloading the database, successful results are cached in memory for **60 seconds**. Failed health checks are cached for only **5 seconds** to allow fast recovery discovery.
+
+## Connection Pooling
+
+The PostgreSQL client uses connection pooling with tuning configurations that can be overridden in the `.env` file:
+* `DATABASE_POOL_MAX` (default: `10`): Maximum active connections.
+* `DATABASE_POOL_MIN` (default: `4`): Minimum idle connections kept pre-warmed.
+* `DATABASE_POOL_CONNECTION_TIMEOUT_MS` (default: `10000`): Pool checkout timeout.
+* `DATABASE_STATEMENT_TIMEOUT_MS` (default: `60000`): SQL execution limit.
+* `DATABASE_LOCK_TIMEOUT_MS` (default: `10000`): Row lock acquisition limit.
+* `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` (default: `30000`): Idle transaction limit.
+
+## Database Migrations
+
+Database schema changes (adding tables, indexes, or modifying columns) are decoupled from application startup and managed sequentially via raw `.sql` files in the `migrations/` directory.
+
+### Running Migrations
+To check for and apply any pending database migrations:
+```bash
+npm run db:migrate
+```
+*Note: In development, `npm run setup` automatically runs all migrations before seeding.*
+
+### Creating a New Migration & Safety Checks
+To add a schema change:
+1. Create a new `.sql` file in the `migrations/` folder.
+2. Prefix it with the next sequential 3-digit number (e.g. `migrations/002_add_discount_code.sql`).
+3. Write standard, raw SQL statement(s).
+4. Run `npm run db:migrate` locally to verify that it executes and applies successfully.
+
+#### 🛡️ Migration Safety Check (Linter)
+To prevent accidental data loss or backward-compatibility breaks in production (e.g. during rolling deploys), a static analysis linter script blocks destructive DDL operations:
+* **Blocked Actions**:
+  * `DROP TABLE` (prevent accidental table deletion)
+  * `DROP COLUMN` or `ALTER TABLE ... DROP` (prevent active column deletion)
+  * `RENAME COLUMN` or `RENAME TO` (prevent breaking active database references)
+  * `ALTER COLUMN ... TYPE` or `SET DATA TYPE` (prevent data type mismatch crashes)
+  * `CREATE INDEX` without `CONCURRENTLY` (prevent locking table writes during index build)
+  * `TRUNCATE` (prevent accidental table wipes)
+  * `ADD COLUMN ... NOT NULL` without `DEFAULT` (prevent database errors when adding columns to populated tables)
+* **Git Pre-commit Hook**: Running `npm run setup` automatically installs a local Git pre-commit hook. If you attempt to commit a migration that contains one of the blocked operations, `git commit` will fail.
+* **PR / CI Build Failures**: Any PR build running `npm test` will run the migration linter and fail if a destructive migration is detected.
+
+#### 🔓 How to Bypass Safety Checks
+If a destructive migration is genuinely intended (e.g. dropping a temporary table, or cleanup during scheduled maintenance):
+* **Bypass via Comment (Recommended)**: Add the following comment anywhere in the SQL file:
+  ```sql
+  -- safety-bypass: allow-destructive-operations
+  ```
+  This is the recommended way, as it explicitly documents the intentional nature of the change in version control.
+* **Bypass via CLI Override**: Run the migration runner with the `--force` argument:
+  ```bash
+  npm run db:migrate -- --force
+  ```
+* **Bypass via Environment Override**: Run with the `ALLOW_DESTRUCTIVE_MIGRATIONS=true` environment variable:
+  ```bash
+  ALLOW_DESTRUCTIVE_MIGRATIONS=true npm run db:migrate
+  ```
+
+
+
+### Tracking Applied Migrations
+All executed migrations are recorded in the `schema_migrations` table in your database. The runner compares this list against files in the `migrations/` directory to ensure each script runs exactly once.
+
+### Startup Behavior Config
+By default, the server performs a non-blocking check on boot to verify if any migrations are pending. You can configure this behavior in your `.env` file using the `DATABASE_MIGRATION_BEHAVIOR` variable:
+* `WARN` (default): Prints a warning block in console logs listing all pending files, but boots normally.
+* `KILL`: Outputs a fatal error and terminates the process (`process.exit(1)`) immediately, preventing the server from starting.
+* `IGNORE`: Bypasses migration checking entirely.
+
+
 ## Files
 
 ```
@@ -211,7 +286,7 @@ src/db.js           Postgres pool, schema creation (no data seeding), rate-limit
 src/auth.js         JWT signing/verification, role/hub-scope guards
 src/errors.js       HttpError + asyncHandler
 src/util.js         Timing-safe string comparison
-src/routes/         auth.js, hubs.js (timeslots read), buses.js, tickets.js, dashboard.js
+src/routes/         auth.js, hubs.js, buses.js, tickets.js, dashboard.js, health.js
 docker-compose.yml  Local Postgres for development (started by `npm run setup`)
 scripts/setup.js    One-command run: starts Postgres, creates .env, seeds, starts the server
 scripts/seed.js     Manual bulk setup: upserts hubs/timeslots/logins from a JSON file

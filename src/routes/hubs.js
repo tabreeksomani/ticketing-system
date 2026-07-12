@@ -1,6 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
-const { requireRole } = require('../auth');
+const { requireAuth } = require('../auth');
 const { jsonError, asyncHandler } = require('../errors');
 
 const router = express.Router();
@@ -26,7 +26,9 @@ const TIMESLOT_SELECT = `
 // sold/available per timeslot, not raw CRUD. Hubs/timeslots themselves have
 // no create/edit/delete API; they're set up by hand via psql.
 router.get('/hubs/:hubId/timeslots', asyncHandler(async (req, res) => {
-  const user = await requireRole(req, ['volunteer', 'admin']);
+  // Any authenticated user can read the timeslot list - it's a harmless read.
+  // Writes (selling against a timeslot) are gated separately in tickets.js.
+  const user = await requireAuth(req);
   const hubId = decodeURIComponent(req.params.hubId);
   if (user.role === 'volunteer' && !user.hubIds.includes(hubId)) {
     jsonError('Not authorized for this hub', 403);
