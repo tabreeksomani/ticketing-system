@@ -97,6 +97,7 @@
   let expandedSalesHubs = new Set();
   let dailySalesData = [];
   let selectedDailySalesHubs = null; // null until first load, then a Set of hubIds
+  let dailySalesFareFilter = 'all'; // 'all' | 'adult' | 'child' - which count field the day-by-day bars pivot on
   let ingressData = null;
   let expandedIngressTrips = new Set();
   let ingressTripBreakdowns = {}; // tripId -> array, cached once fetched
@@ -352,13 +353,17 @@
     const totalCapacity = data.reduce((s, h) => s + h.totalCapacity, 0);
     const totalSlots = data.reduce((s, h) => s + h.timeslots.length, 0);
     const totalStandby = data.reduce((s, h) => s + h.standbyIssued, 0);
+    const totalAdult = data.reduce((s, h) => s + h.totalAdult, 0);
+    const totalChild = data.reduce((s, h) => s + h.totalChild, 0);
 
     // Pivot dailySalesData (one row per hub+day) into one bar per day, summed
-    // across whichever hubs are currently checked in the multiselect.
+    // across whichever hubs are currently checked in the multiselect. Which
+    // count field gets summed depends on the All/Adult/Child toggle.
+    const dailySalesField = dailySalesFareFilter === 'adult' ? 'adultCount' : dailySalesFareFilter === 'child' ? 'childCount' : 'count';
     const dayTotals = {};
     dailySalesData.forEach(r => {
       if (!selectedDailySalesHubs.has(r.hubId)) return;
-      dayTotals[r.day] = (dayTotals[r.day] || 0) + r.count;
+      dayTotals[r.day] = (dayTotals[r.day] || 0) + r[dailySalesField];
     });
     const days = Object.keys(dayTotals).sort();
 
@@ -373,10 +378,17 @@
         <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${totalSlots}</div><div class="stat-label">Timeslots</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('ticket', 20)}</div><div class="stat-value">${totalSold}/${totalCapacity}</div><div class="stat-label">Tickets Sold</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${totalStandby}</div><div class="stat-label">Standby Issued</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalAdult}</div><div class="stat-label">Adult Tickets</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalChild}</div><div class="stat-label">Child Tickets</div></div>
       </div>
 
       <div class="card">
         <h2 class="section">Daily Sales by Hub</h2>
+        <div class="tabs" style="margin-bottom:12px;">
+          <div class="tab ${dailySalesFareFilter === 'all' ? 'active' : ''}" data-daily-fare="all">All</div>
+          <div class="tab ${dailySalesFareFilter === 'adult' ? 'active' : ''}" data-daily-fare="adult">Adult</div>
+          <div class="tab ${dailySalesFareFilter === 'child' ? 'active' : ''}" data-daily-fare="child">Child</div>
+        </div>
         <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
           ${data.map(hub => `
             <label style="display:flex; align-items:center; gap:6px; font-size:12px; background:#F7F5F0; border:1px solid #E2D9C4; border-radius:8px; padding:6px 10px; cursor:pointer;">
@@ -431,12 +443,14 @@
           ${expanded ? ((hub.timeslots.length || hub.standbyIssued) ? `
             <div class="table-wrap" style="margin-top:10px; border-top:1px solid #E8E1D3; padding-top:10px;">
               <table>
-                <tr><th>Departure</th><th>Capacity</th><th>Allocated</th><th>Remaining</th><th>Boarded</th><th>Returned</th></tr>
+                <tr><th>Departure</th><th>Capacity</th><th>Allocated</th><th>Adult</th><th>Child</th><th>Remaining</th><th>Boarded</th><th>Returned</th></tr>
                 ${hub.timeslots.map(t => `
                   <tr>
                     <td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</span></td>
                     <td>${t.capacity}</td>
                     <td>${t.sold}</td>
+                    <td>${t.adult}</td>
+                    <td>${t.child}</td>
                     <td>${t.available}</td>
                     <td>${t.boarded}</td>
                     <td>${t.returned}</td>
@@ -446,6 +460,8 @@
                   <td>Standby</td>
                   <td>—</td>
                   <td>${hub.standbyIssued}</td>
+                  <td>${hub.standbyAdult}</td>
+                  <td>${hub.standbyChild}</td>
                   <td>—</td>
                   <td>${hub.standbyBoarded}</td>
                   <td>${hub.standbyReturned}</td>
@@ -454,6 +470,8 @@
                   <td>Total</td>
                   <td>${hub.totalCapacity}</td>
                   <td>${hub.totalSold + hub.standbyIssued}</td>
+                  <td>${hub.totalAdult}</td>
+                  <td>${hub.totalChild}</td>
                   <td>${hub.totalCapacity - hub.totalSold}</td>
                   <td>${hub.totalBoarded + hub.standbyBoarded}</td>
                   <td>${hub.totalReturned + hub.standbyReturned}</td>
@@ -482,6 +500,9 @@
         else selectedDailySalesHubs.delete(hubId);
         renderSalesHtml();
       };
+    });
+    document.querySelectorAll('[data-daily-fare]').forEach(el => {
+      el.onclick = () => { dailySalesFareFilter = el.dataset.dailyFare; renderSalesHtml(); };
     });
   }
 

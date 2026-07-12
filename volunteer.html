@@ -97,6 +97,7 @@
   let allocStep = 'scan'; // 'scan' | 'select'
   let selectedTimeslotId = null;
   let selectedStandby = false;
+  let childCount = 0; // how many of the current batch are children, for fare-type reconciliation
 
   // ---- Ticket Update/Reassignment state ----
   let currentTicket = null;
@@ -412,6 +413,7 @@
     allocStep = 'scan';
     selectedTimeslotId = null;
     selectedStandby = false;
+    childCount = 0;
     renderScanStep();
   }
 
@@ -526,6 +528,24 @@
         <div class="big-count">${validCodes.length}</div>
         <div class="cap-label">ticket(s) ready to sell</div>
       </div>
+      <div class="card">
+        <div style="display:flex; gap:10px; margin-bottom:14px;">
+          <div style="flex:1; background:#F7F5F0; border-radius:10px; padding:12px; text-align:center;">
+            <div id="adultCountVal" style="font-size:20px;font-weight:800;">${validCodes.length - childCount}</div>
+            <div style="font-size:11px;color:#756c5a;">adult</div>
+          </div>
+          <div style="flex:1; background:#F7F5F0; border-radius:10px; padding:12px; text-align:center;">
+            <div id="childCountVal" style="font-size:20px;font-weight:800;">${childCount}</div>
+            <div style="font-size:11px;color:#756c5a;">child</div>
+          </div>
+        </div>
+        <label style="text-align:center;">Of these ${validCodes.length}, how many are children?</label>
+        <div style="display:flex; align-items:center; justify-content:center; gap:20px;">
+          <button id="childCountMinus" class="btn btn-outline" style="width:44px;height:44px;padding:0;border-radius:50%;font-size:20px;line-height:1;">−</button>
+          <div id="childCountCenter" style="font-size:22px;font-weight:800;min-width:28px;text-align:center;">${childCount}</div>
+          <button id="childCountPlus" class="btn btn-outline" style="width:44px;height:44px;padding:0;border-radius:50%;font-size:20px;line-height:1;">+</button>
+        </div>
+      </div>
       ${showHubPicker ? `
         <div class="card" style="padding:10px 14px;">
           <label style="margin-bottom:6px;">Selling for</label>
@@ -535,11 +555,31 @@
         </div>
       ` : ''}
       <div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>
-      <button class="btn btn-primary" id="confirmBtn" disabled style="opacity:0.4; margin-top:4px;">Confirm Sale</button>
+      <button class="btn btn-primary" id="confirmBtn" disabled style="opacity:0.4; margin-top:4px;">
+        <div>Confirm Sale</div>
+        <div id="confirmBtnFareSummary" style="font-size:11px;font-weight:600;opacity:0.85;margin-top:2px;">${validCodes.length - childCount} adult, ${childCount} child</div>
+      </button>
     `);
+
+    // Updates the stepper's own numbers in place, without a full re-render -
+    // that would otherwise re-trigger loadTimeslotsForSale on every tap.
+    function updateChildCountUi() {
+      document.getElementById('adultCountVal').textContent = validCodes.length - childCount;
+      document.getElementById('childCountVal').textContent = childCount;
+      document.getElementById('childCountCenter').textContent = childCount;
+      document.getElementById('confirmBtnFareSummary').textContent = `${validCodes.length - childCount} adult, ${childCount} child`;
+    }
+    document.getElementById('childCountMinus').onclick = () => {
+      if (childCount > 0) { childCount--; updateChildCountUi(); }
+    };
+    document.getElementById('childCountPlus').onclick = () => {
+      if (childCount < validCodes.length) { childCount++; updateChildCountUi(); }
+    };
+
     document.getElementById('backBtn').onclick = () => {
       selectedTimeslotId = null;
       selectedStandby = false;
+      childCount = 0;
       allocStep = 'scan';
       renderScanStep();
     };
@@ -615,7 +655,7 @@
   async function finalizeSale(selection) {
     const validCodes = batch.filter(b => b.valid).map(b => b.code);
     try {
-      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, hubId: activeHubId, codes: validCodes }) });
+      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, hubId: activeHubId, codes: validCodes, childCount }) });
       feedback(true);
       if (result.rejected.length) {
         showToast(`${result.sold.length} sold, ${result.rejected.length} rejected at the last moment`);
@@ -627,6 +667,7 @@
       batch = [];
       selectedTimeslotId = null;
       selectedStandby = false;
+      childCount = 0;
       allocStep = 'scan';
       renderScanStep(); // back to step 1, ready for the next customer
     } catch (e) { showToast(e.message); }
@@ -840,7 +881,7 @@
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
         <div class="ticket-code">${escapeHtml(t.code)}</div>
-        <div class="cap-label" style="margin-top:8px;">${escapeHtml(t.hubName)}</div>
+        <div class="cap-label" style="margin-top:8px;">${escapeHtml(t.hubName)} · ${t.fareType === 'child' ? 'Child' : 'Adult'}</div>
         ${statusBlock}
         ${t.boarded ? '<div class="notice notice-warn">This ticket has already boarded a bus.</div>' : ''}
       </div>

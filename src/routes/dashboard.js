@@ -15,7 +15,9 @@ router.get('/dashboard/sales', asyncHandler(async (req, res) => {
               (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id)::int AS sold,
               (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id AND tk.trip1_id IS NOT NULL)::int AS boarded,
               (SELECT COUNT(*) FROM tickets tk JOIN bus_trips bt4 ON tk.trip4_id = bt4.id
-                WHERE tk.timeslot_id = t.id AND bt4.arrived_at IS NOT NULL)::int AS returned
+                WHERE tk.timeslot_id = t.id AND bt4.arrived_at IS NOT NULL)::int AS returned,
+              (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id AND tk.fare_type = 'adult')::int AS adult,
+              (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id AND tk.fare_type = 'child')::int AS child
        FROM timeslots t WHERE t.hub_id = $1 ORDER BY t.departure_time ASC`,
       [hub.id]
     );
@@ -31,12 +33,16 @@ router.get('/dashboard/sales', asyncHandler(async (req, res) => {
         boarded,
         noShow: sold - boarded,
         returned: row.returned,
+        adult: row.adult,
+        child: row.child,
       };
     });
 
     const { rows: standbyRows } = await pool.query(
       `SELECT COUNT(*)::int AS issued,
               COUNT(*) FILTER (WHERE tk.trip1_id IS NOT NULL)::int AS boarded,
+              COUNT(*) FILTER (WHERE tk.fare_type = 'adult')::int AS adult,
+              COUNT(*) FILTER (WHERE tk.fare_type = 'child')::int AS child,
               (SELECT COUNT(*) FROM tickets tk2 JOIN bus_trips bt4 ON tk2.trip4_id = bt4.id
                 WHERE tk2.hub_id = $1 AND tk2.is_standby = TRUE AND bt4.arrived_at IS NOT NULL)::int AS returned
        FROM tickets tk WHERE tk.hub_id = $1 AND tk.is_standby = TRUE`,
@@ -54,9 +60,13 @@ router.get('/dashboard/sales', asyncHandler(async (req, res) => {
       totalBoarded: slots.reduce((s, x) => s + x.boarded, 0),
       totalNoShow: slots.reduce((s, x) => s + x.noShow, 0),
       totalReturned: slots.reduce((s, x) => s + x.returned, 0),
+      totalAdult: slots.reduce((s, x) => s + x.adult, 0) + standby.adult,
+      totalChild: slots.reduce((s, x) => s + x.child, 0) + standby.child,
       standbyIssued: standby.issued,
       standbyBoarded: standby.boarded,
       standbyReturned: standby.returned,
+      standbyAdult: standby.adult,
+      standbyChild: standby.child,
     });
   }
   res.json(out);
@@ -72,7 +82,9 @@ router.get('/dashboard/daily-sales', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT h.id AS hub_id, h.name AS hub_name,
             (t.sold_at AT TIME ZONE 'America/Los_Angeles')::date AS day,
-            COUNT(*)::int AS count
+            COUNT(*)::int AS count,
+            COUNT(*) FILTER (WHERE t.fare_type = 'adult')::int AS adult_count,
+            COUNT(*) FILTER (WHERE t.fare_type = 'child')::int AS child_count
      FROM tickets t JOIN hubs h ON t.hub_id = h.id
      GROUP BY h.id, h.name, day
      ORDER BY day ASC`
@@ -81,6 +93,8 @@ router.get('/dashboard/daily-sales', asyncHandler(async (req, res) => {
     hubId: r.hub_id, hubName: r.hub_name,
     day: r.day.toISOString().slice(0, 10),
     count: r.count,
+    adultCount: r.adult_count,
+    childCount: r.child_count,
   })));
 }));
 

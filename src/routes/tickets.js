@@ -51,6 +51,17 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
   if (!hubId) jsonError('hubId is required', 400);
   if (!user.hubIds.includes(hubId)) jsonError('Not authorized for this hub', 403);
 
+  // Which of this batch's codes are children - a count, not per-code tags,
+  // so the whole family can still be scanned and sold as one batch onto one
+  // timeslot. The first childCount codes (in scan order) get fare_type
+  // 'child'; it doesn't matter which specific codes those are, since a
+  // ticket code isn't tied to a rider's name.
+  const childCount = req.body.childCount !== undefined ? parseInt(req.body.childCount, 10) : 0;
+  if (!Number.isInteger(childCount) || childCount < 0 || childCount > codes.length) {
+    jsonError('childCount must be between 0 and the number of codes', 400);
+  }
+  const fareTypeFor = (index) => (index < childCount ? 'child' : 'adult');
+
   const sold = [];
   const rejected = [];
 
@@ -59,13 +70,17 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
     await client.query('BEGIN');
 
     if (standby) {
-      for (const code of codes) {
+      for (let i = 0; i < codes.length; i++) {
+        const code = codes[i];
         const { rows: existing } = await client.query('SELECT id FROM tickets WHERE code = $1', [code]);
         if (existing.length) {
           rejected.push({ code, reason: 'Already sold' });
           continue;
         }
-        await client.query('INSERT INTO tickets (code, hub_id, timeslot_id, is_standby) VALUES ($1, $2, NULL, TRUE)', [code, hubId]);
+        await client.query(
+          'INSERT INTO tickets (code, hub_id, timeslot_id, is_standby, fare_type) VALUES ($1, $2, NULL, TRUE, $3)',
+          [code, hubId, fareTypeFor(i)]
+        );
         sold.push(code);
       }
       await client.query('COMMIT');
@@ -88,13 +103,17 @@ router.post('/tickets/sell', asyncHandler(async (req, res) => {
       jsonError(`Only ${available} seat(s) left in that timeslot for ${codes.length} ticket(s)`, 409);
     }
 
-    for (const code of codes) {
+    for (let i = 0; i < codes.length; i++) {
+      const code = codes[i];
       const { rows: existing } = await client.query('SELECT id FROM tickets WHERE code = $1', [code]);
       if (existing.length) {
         rejected.push({ code, reason: 'Already sold' });
         continue;
       }
-      await client.query('INSERT INTO tickets (code, hub_id, timeslot_id) VALUES ($1, $2, $3)', [code, hubId, timeslotId]);
+      await client.query(
+        'INSERT INTO tickets (code, hub_id, timeslot_id, fare_type) VALUES ($1, $2, $3, $4)',
+        [code, hubId, timeslotId, fareTypeFor(i)]
+      );
       sold.push(code);
     }
     await client.query('COMMIT');
@@ -170,6 +189,7 @@ router.get('/tickets/view', asyncHandler(async (req, res) => {
     hubName: ticket.hub_name,
     departureTime: ticket.departure_time,
     isStandby: ticket.is_standby,
+    fareType: ticket.fare_type,
     boarded: ticket.trip1_id !== null,
   });
 }));
