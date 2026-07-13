@@ -156,6 +156,7 @@ router.get('/tickets/lookup', asyncHandler(async (req, res) => {
     timeslotId: ticket.timeslot_id !== null ? ticket.timeslot_id : null,
     departureTime: ticket.departure_time,
     isStandby: ticket.is_standby,
+    fareType: ticket.fare_type,
     boarded: ticket.trip1_id !== null,
   });
 }));

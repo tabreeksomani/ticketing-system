@@ -48,6 +48,16 @@
   .notice { text-align: center; padding: 16px; border-radius: 10px; font-size: 14px; font-weight: 600; }
   .notice-warn { background: #FEF3C7; color: #92400E; }
   .ticket-code { font-family: 'Palatino Linotype', Georgia, serif; font-size: 22px; font-weight: 800; text-align: center; color: #241C10; }
+  .ticket-code-label { text-align: center; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: #756c5a; }
+  .pill-badge-row { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .pill-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 20px; }
+  .pill-badge-hub { background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; }
+  .pill-badge-adult { background: #DCFCE7; color: #166534; }
+  .pill-badge-child { background: #DBEAFE; color: #1D4ED8; }
+  .ticket-divider { border-top: 1px dashed #E2D9C4; margin: 16px 0; }
+  .ticket-detail-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .ticket-detail-value { font-weight: 700; font-size: 15px; color: #241C10; }
+  .ticket-detail-label { text-align: center; font-size: 11px; color: #756c5a; margin-top: 2px; }
   .toast { position: fixed; top: calc(66px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 40; max-width: 92%; text-align: center; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
   .toast-error { background: #FEE2E2; border: 1px solid #FCA5A5; color: #B91C1C; }
   .toast-success { background: #DCFCE7; border: 1px solid #86EFAC; color: #166534; }
@@ -185,6 +195,7 @@
     swap: '<path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/>',
     bus: '<path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/>',
     home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11h14V9"/>',
+    pin: '<path d="M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/>',
   };
   function icon(name, size) {
     size = size || 16;
@@ -652,25 +663,116 @@
     } catch (e) { showToast(e.message); }
   }
 
-  async function finalizeSale(selection) {
-    const validCodes = batch.filter(b => b.valid).map(b => b.code);
-    try {
-      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, hubId: activeHubId, codes: validCodes, childCount }) });
-      feedback(true);
-      if (result.rejected.length) {
-        showToast(`${result.sold.length} sold, ${result.rejected.length} rejected at the last moment`);
-      } else if (result.standby) {
-        showToast(`${result.sold.length} standby ticket(s) issued`, 'success');
-      } else {
-        showToast(`${result.sold.length} ticket(s) sold`, 'success');
-      }
-      batch = [];
+  // ---- Step 3a: full success ----
+  function renderSaleSuccessStep({ soldCount, adultCount, childCount, isStandby, departureTime }) {
+    const hub = user.hubs && user.hubs.find(h => h.id === activeHubId);
+    renderShell(`
+      <div class="card" style="text-align:center; background:#DCFCE7; border-color:#86EFAC;">
+        <div style="width:60px;height:60px;border-radius:50%;background:#BBF7D0;color:#166534;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+          ${icon('check', 28)}
+        </div>
+        <div style="font-size:17px;font-weight:800;color:#166534;">Sale complete</div>
+        <div style="font-size:13px;color:#166534;margin-top:4px;">${soldCount} ticket${soldCount === 1 ? '' : 's'} sold · ${adultCount} adult, ${childCount} child</div>
+      </div>
+      <div class="card" style="text-align:center;">
+        ${isStandby ? `
+          <div class="cap-label" style="margin:0;">Standby ticket(s) - not tied to a timeslot</div>
+        ` : `
+          <div style="font-weight:700;">${escapeHtml(formatDepartureTime(departureTime))}</div>
+          <div class="cap-label" style="margin:2px 0 0;">${hub ? escapeHtml(hub.name) : ''}</div>
+        `}
+      </div>
+      <button class="btn btn-primary" id="scanNextBtn">Scan next batch</button>
+    `);
+    document.getElementById('scanNextBtn').onclick = () => {
+      allocStep = 'scan';
+      renderScanStep();
+    };
+  }
+
+  // ---- Step 3b: whole-batch failure - the seat-count race lost between
+  // confirming and the server re-checking capacity. Nothing was sold (the
+  // backend rejects the whole batch before inserting anything), so the
+  // batch itself is deliberately left untouched here - the volunteer can
+  // either pick a different time for the same batch or go back to scanning.
+  function renderSaleFailureStep(message, timeslotId, batchSize) {
+    const stale = allocTimeslots.find(t => t.id === timeslotId);
+    renderShell(`
+      <div class="card" style="text-align:center; background:#FEE2E2; border-color:#FCA5A5;">
+        <div style="width:60px;height:60px;border-radius:50%;background:#FECACA;color:#B91C1C;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+          ${icon('close', 28)}
+        </div>
+        <div style="font-size:17px;font-weight:800;color:#B91C1C;">That time just filled up</div>
+        <div style="font-size:13px;color:#B91C1C;margin-top:6px;">Someone else took the last seats while this sale was confirming.</div>
+        <div style="font-size:13px;color:#B91C1C;margin-top:4px;font-weight:700;">No tickets were sold — your batch of ${batchSize} is still here.</div>
+      </div>
+      ${stale ? `
+        <div class="card" style="text-align:center;">
+          <div style="font-weight:700;">${escapeHtml(formatDepartureTime(stale.departureTime))}</div>
+          <div class="cap-label" style="margin:2px 0 0; color:#B91C1C;">0 of ${stale.capacity} seats left</div>
+        </div>
+      ` : ''}
+      <button class="btn btn-primary" id="pickAnotherTimeBtn" style="margin-bottom:8px;">Pick another time</button>
+      <button class="btn btn-outline" id="backToScanningBtn">Back to scanning</button>
+    `);
+    document.getElementById('pickAnotherTimeBtn').onclick = () => {
+      selectedTimeslotId = null;
+      allocStep = 'select';
+      renderSelectStep();
+    };
+    document.getElementById('backToScanningBtn').onclick = () => {
       selectedTimeslotId = null;
       selectedStandby = false;
       childCount = 0;
       allocStep = 'scan';
-      renderScanStep(); // back to step 1, ready for the next customer
-    } catch (e) { showToast(e.message); }
+      renderScanStep();
+    };
+  }
+
+  async function finalizeSale(selection) {
+    const validCodes = batch.filter(b => b.valid).map(b => b.code);
+    const adultCountAtSubmit = validCodes.length - childCount;
+    const childCountAtSubmit = childCount;
+    try {
+      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, hubId: activeHubId, codes: validCodes, childCount }) });
+      feedback(true);
+      if (result.rejected.length) {
+        // Partial rejection (some codes individually already sold) is a
+        // different, rarer case than the whole-batch capacity race below -
+        // kept as a toast rather than its own screen.
+        showToast(`${result.sold.length} sold, ${result.rejected.length} rejected at the last moment`);
+        batch = [];
+        selectedTimeslotId = null;
+        selectedStandby = false;
+        childCount = 0;
+        allocStep = 'scan';
+        renderScanStep();
+        return;
+      }
+      batch = [];
+      selectedTimeslotId = null;
+      selectedStandby = false;
+      allocStep = 'success';
+      renderSaleSuccessStep({
+        soldCount: result.sold.length,
+        adultCount: adultCountAtSubmit,
+        childCount: childCountAtSubmit,
+        isStandby: !!result.standby,
+        departureTime: result.standby ? null : (allocTimeslots.find(t => t.id === result.timeslotId) || {}).departureTime,
+      });
+      childCount = 0;
+    } catch (e) {
+      feedback(false);
+      // Only the specific whole-batch seat-count race gets its own recovery
+      // screen - every other failure (auth, unknown timeslot, etc.) stays a
+      // toast on the existing confirm screen.
+      if (!selection.standby && /seat\(s\) left/.test(e.message)) {
+        allocStep = 'failure';
+        renderSaleFailureStep(e.message, selection.timeslotId, validCodes.length);
+      } else {
+        showToast(e.message);
+      }
+    }
   }
 
   // ========================================================== REASSIGN ====
@@ -732,24 +834,38 @@
 
   async function renderTicketStep() {
     const t = currentTicket;
-    let statusBlock = '';
+    const fareBadge = t.fareType === 'child'
+      ? `<span class="pill-badge pill-badge-child">Child</span>`
+      : `<span class="pill-badge pill-badge-adult">Adult</span>`;
+    let detailBlock = '';
     let showPicker = true;
 
     if (t.isStandby) {
-      statusBlock = '<div class="notice notice-warn">This is a standby ticket — pick a timeslot below to assign it one.</div>';
+      detailBlock = '<div class="notice notice-warn">This is a standby ticket — pick a timeslot below to assign it one.</div>';
     } else if (t.boarded) {
-      statusBlock = '<div class="notice notice-warn">This ticket has already boarded a bus and can no longer be switched.</div>';
+      detailBlock = '<div class="notice notice-warn">This ticket has already boarded a bus and can no longer be switched.</div>';
       showPicker = false;
     } else {
-      statusBlock = `<div class="cap-label" style="display:flex;align-items:center;justify-content:center;gap:6px;">Currently: <span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
+      detailBlock = `
+        <div class="ticket-detail-row">
+          <span style="color:#8C734C;display:inline-flex;">${icon('bus', 18)}</span>
+          <div class="ticket-detail-value">${escapeHtml(formatDepartureTime(t.departureTime))}</div>
+        </div>
+        <div class="ticket-detail-label">Current departure time</div>
+      `;
     }
 
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
+        <div class="ticket-code-label">Ticket</div>
         <div class="ticket-code">${escapeHtml(t.code)}</div>
-        <div class="cap-label" style="margin-top:8px;">${escapeHtml(t.hubName)}</div>
-        ${statusBlock}
+        <div class="pill-badge-row">
+          <span class="pill-badge pill-badge-hub">${icon('pin', 13)}${escapeHtml(t.hubName)}</span>
+          ${fareBadge}
+        </div>
+        <div class="ticket-divider"></div>
+        ${detailBlock}
       </div>
       ${showPicker ? '<div class="card" id="timeslotCard"><div class="empty">Loading available times…</div></div>' : ''}
       ${showPicker ? `<button class="btn btn-primary" id="confirmSwitchBtn" disabled style="opacity:0.4;">${icon('swap', 15)} Switch Timeslot</button>` : ''}
@@ -871,19 +987,33 @@
 
   function renderViewResultStep() {
     const t = viewedTicket;
-    let statusBlock = '';
+    const fareBadge = t.fareType === 'child'
+      ? `<span class="pill-badge pill-badge-child">Child</span>`
+      : `<span class="pill-badge pill-badge-adult">Adult</span>`;
+    let detailBlock = '';
     if (t.isStandby) {
-      statusBlock = '<div class="notice notice-warn">This is a standby ticket - not tied to a timeslot.</div>';
+      detailBlock = '<div class="notice notice-warn">This is a standby ticket - not tied to a timeslot.</div>';
     } else {
-      statusBlock = `<div class="cap-label" style="display:flex;align-items:center;justify-content:center;gap:6px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div>`;
+      detailBlock = `
+        <div class="ticket-detail-row">
+          <span style="color:#8C734C;display:inline-flex;">${icon('bus', 18)}</span>
+          <div class="ticket-detail-value">${escapeHtml(formatDepartureTime(t.departureTime))}</div>
+        </div>
+        <div class="ticket-detail-label">Departure time</div>
+      `;
     }
     renderShell(`
       <button class="btn btn-outline" id="backBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} Look up another ticket</button>
       <div class="card">
+        <div class="ticket-code-label">Ticket</div>
         <div class="ticket-code">${escapeHtml(t.code)}</div>
-        <div class="cap-label" style="margin-top:8px;">${escapeHtml(t.hubName)} · ${t.fareType === 'child' ? 'Child' : 'Adult'}</div>
-        ${statusBlock}
-        ${t.boarded ? '<div class="notice notice-warn">This ticket has already boarded a bus.</div>' : ''}
+        <div class="pill-badge-row">
+          <span class="pill-badge pill-badge-hub">${icon('pin', 13)}${escapeHtml(t.hubName)}</span>
+          ${fareBadge}
+        </div>
+        <div class="ticket-divider"></div>
+        ${detailBlock}
+        ${t.boarded ? '<div class="notice notice-warn" style="margin-top:12px;">This ticket has already boarded a bus.</div>' : ''}
       </div>
     `);
     document.getElementById('backBtn').onclick = () => renderViewLookupStep();
