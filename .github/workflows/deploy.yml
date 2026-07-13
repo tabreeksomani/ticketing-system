@@ -6,10 +6,31 @@ on:
       - main
 
 jobs:
-  deploy:
-    name: Deploy to EC2 Instances
+  deploy_canary:
+    name: Deploy to Canary (Instance 3)
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
+      - name: Deploy to Instance 3
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST_3 }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ec2-user/ticketing-system
+            git pull origin main
+            npm install --omit=dev
+            npm run db:migrate -- --force
+            sudo systemctl restart mulaqatexpress
+
+  deploy_production:
+    name: Deploy to Production (Instances 1 & 2)
+    needs: deploy_canary
+    runs-on: ubuntu-latest
+    environment: Production  # Triggers the manual approval gate in GitHub
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -31,19 +52,6 @@ jobs:
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.EC2_HOST_2 }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            cd /home/ec2-user/ticketing-system
-            git pull origin main
-            npm install --omit=dev
-            npm run db:migrate -- --force
-            sudo systemctl restart mulaqatexpress
-
-      - name: Deploy to Instance 3
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.EC2_HOST_3 }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
