@@ -38,6 +38,16 @@ app.get('/api/git-info', (req, res) => {
   res.json(gitInfo);
 });
 
+const { requireAuth } = require('./src/auth');
+app.get('/api/support-link', async (req, res, next) => {
+  try {
+    await requireAuth(req);
+    res.json({ url: 'https://chat.whatsapp.com/Eh2OZ6LOHRH95DE184ddH4' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Register health check BEFORE schema-readiness middleware so it can report DB downtime gracefully
 app.use(require('./src/routes/health'));
 

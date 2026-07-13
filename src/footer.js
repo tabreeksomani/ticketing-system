@@ -5,12 +5,17 @@
   const isAdmin = window.location.pathname.includes('admin.html');
   const tokenKey = isAdmin ? 'admin_token' : 'volunteer_token';
 
+  // Read configuration flags from the script tag attributes
+  const currentScript = document.currentScript;
+  const includeWhatsApp = currentScript ? currentScript.getAttribute('data-include-whatsapp') !== 'false' : true;
+  const bypassAuth = currentScript ? currentScript.getAttribute('data-bypass-auth') === 'true' : false;
+
   function checkAndRenderFooter() {
     const token = localStorage.getItem(tokenKey);
     let footer = document.getElementById('floating-footer');
 
-    // If not logged in, hide footer and restore body padding
-    if (!token) {
+    // If not logged in and auth is not bypassed, hide footer and restore padding
+    if (!token && !bypassAuth) {
       if (footer) footer.style.display = 'none';
       document.body.style.paddingBottom = '0px';
       return;
@@ -76,16 +81,32 @@
     leftSpan.textContent = 'Copyright, Council for British Columbia';
     footer.appendChild(leftSpan);
 
-    // Right content (WhatsApp Link)
+    // Right content (WhatsApp Link - loaded dynamically via authenticated API)
     const rightSpan = document.createElement('span');
-    rightSpan.innerHTML = 'For support WhatsApp group, <a href="https://chat.whatsapp.com/Eh2OZ6LOHRH95DE184ddH4" target="_blank" style="color: #8c734c; font-weight: 700; text-decoration: none; border-bottom: 1px dotted #8c734c; padding-bottom: 1px; transition: color 0.15s;">click here</a>';
-    
-    // Add hover transition to the link
-    const link = rightSpan.querySelector('a');
-    link.addEventListener('mouseenter', () => { link.style.color = '#6b5636'; });
-    link.addEventListener('mouseleave', () => { link.style.color = '#8c734c'; });
-    
     footer.appendChild(rightSpan);
+
+    if (token && includeWhatsApp) {
+      fetch('/api/support-link', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+        .then(res => {
+          if (!res.ok) throw new Error('Unauthorized');
+          return res.json();
+        })
+        .then(data => {
+          if (data.url) {
+            rightSpan.innerHTML = `For support WhatsApp group, <a href="${data.url}" target="_blank" style="color: #8c734c; font-weight: 700; text-decoration: none; border-bottom: 1px dotted #8c734c; padding-bottom: 1px; transition: color 0.15s;">click here</a>`;
+            const link = rightSpan.querySelector('a');
+            link.addEventListener('mouseenter', () => { link.style.color = '#6b5636'; });
+            link.addEventListener('mouseleave', () => { link.style.color = '#8c734c'; });
+          }
+        })
+        .catch(() => {
+          rightSpan.textContent = '';
+        });
+    }
 
     document.body.appendChild(footer);
     
