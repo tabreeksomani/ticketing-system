@@ -16,6 +16,8 @@ $ git clone https://github.com/tabreeksomani/ticketing-system.git
 $ cd ticketing-system
 $ npm install
 $ curl -o global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+$ sudo mkdir -p /var/log/mulaqatexpress
+$ sudo chown -R ec2-user:ec2-user /var/log/mulaqatexpress
 ```
 3. setup the runtime config
 ```
@@ -45,16 +47,11 @@ Description=mulaqatexpress
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/npm start
+ExecStart=/bin/sh -c '/usr/bin/npm start >> /var/log/mulaqatexpress/app.log 2>&1'
 WorkingDirectory=/home/ec2-user/ticketing-system
 Restart=always
 User=ec2-user
 Environment=NODE_ENV=production
-
-# Redirect output to log file for CloudWatch Agent collection
-StandardOutput=append:/var/log/mulaqatexpress/app.log
-StandardError=append:/var/log/mulaqatexpress/app.log
-LogsDirectory=mulaqatexpress
 
 [Install]
 WantedBy=multi-user.target
