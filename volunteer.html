@@ -186,13 +186,13 @@
     return `${formatted} PT`;
   }
 
-  // The 2:00 AM Jul 26 2026 (Pacific) departure is the volunteer run. Matched
-  // against the raw wall-clock text since departureTime is always Pacific
-  // wall-clock (see formatDepartureTime above).
+  // Any departure before 4:00 AM (Pacific wall-clock) is a volunteer run.
+  // Matched against the raw wall-clock text since departureTime is always
+  // Pacific wall-clock (see formatDepartureTime above).
   function isVolunteerDeparture(raw) {
     if (!raw) return false;
     const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
-    return !!m && m[1] === '2026' && m[2] === '07' && m[3] === '26' && m[4] === '02' && m[5] === '00';
+    return !!m && +m[4] < 4;
   }
 
   // ---- inline SVG icon library (no external icon font/CDN) ----
