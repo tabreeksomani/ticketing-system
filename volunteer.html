@@ -54,6 +54,7 @@
   .pill-badge-hub { background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; }
   .pill-badge-adult { background: #DCFCE7; color: #166534; }
   .pill-badge-child { background: #DBEAFE; color: #1D4ED8; }
+  .volunteer-marker { display: inline-block; background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: 800; letter-spacing: 0.3px; padding: 2px 7px; border-radius: 10px; }
   .ticket-divider { border-top: 1px dashed #E2D9C4; margin: 16px 0; }
   .ticket-detail-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
   .ticket-detail-value { font-weight: 700; font-size: 15px; color: #241C10; }
@@ -183,6 +184,15 @@
       timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
     return `${formatted} PT`;
+  }
+
+  // The 2:00 AM Jul 26 2026 (Pacific) departure is the volunteer run. Matched
+  // against the raw wall-clock text since departureTime is always Pacific
+  // wall-clock (see formatDepartureTime above).
+  function isVolunteerDeparture(raw) {
+    if (!raw) return false;
+    const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+    return !!m && m[1] === '2026' && m[2] === '07' && m[3] === '26' && m[4] === '02' && m[5] === '00';
   }
 
   // ---- inline SVG icon library (no external icon font/CDN) ----
@@ -646,7 +656,7 @@
       card.innerHTML = `<label>Tap a departure time (${needed} ticket${needed > 1 ? 's' : ''})</label>` +
         usable.map(t => `
           <div class="pill ${selectedTimeslotId === t.id ? 'selected' : ''}" data-slot="${t.id}">
-            <div><div class="name" style="display:flex;align-items:center;gap:7px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 16)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
+            <div><div class="name" style="display:flex;align-items:center;gap:7px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 16)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}${isVolunteerDeparture(t.departureTime) ? '<span class="volunteer-marker">Volunteer</span>' : ''}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
             <div>${selectedTimeslotId === t.id ? icon('check', 16) : icon('arrowRight', 16)}</div>
           </div>
         `).join('');
@@ -897,7 +907,7 @@
     }
     card.innerHTML = `<label>Choose a new departure time</label>` + options.map(t => `
       <div class="pill ${selectedReassignSlotId === t.id ? 'selected' : ''}" data-slot="${t.id}">
-        <div><div class="name" style="display:flex;align-items:center;gap:7px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 16)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
+        <div><div class="name" style="display:flex;align-items:center;gap:7px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 16)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}${isVolunteerDeparture(t.departureTime) ? '<span class="volunteer-marker">Volunteer</span>' : ''}</div><div class="meta">${t.available} of ${t.capacity} seats left</div></div>
         <div>${icon('arrowRight', 16)}</div>
       </div>
     `).join('');
