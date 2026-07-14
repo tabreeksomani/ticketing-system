@@ -584,7 +584,7 @@
       if (childCount > 0) { childCount--; updateChildCountUi(); }
     };
     document.getElementById('childCountPlus').onclick = () => {
-      if (childCount < validCodes.length) { childCount++; updateChildCountUi(); }
+      if (childCount < validCodes.length - 1) { childCount++; updateChildCountUi(); }
     };
 
     document.getElementById('backBtn').onclick = () => {
