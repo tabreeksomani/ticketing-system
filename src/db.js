@@ -15,6 +15,11 @@ const pool = new Pool({
   idle_in_transaction_session_timeout: process.env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS ? parseInt(process.env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS, 10) : 30000,
 });
 
+// Prevent unhandled connection errors on idle clients from crashing the server
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle database client:', err.message);
+});
+
 
 
 /**
