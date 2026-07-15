@@ -78,7 +78,7 @@
     const leftSpan = document.createElement('span');
     leftSpan.id = 'footer-left-content';
     leftSpan.style.opacity = '0.85';
-    leftSpan.textContent = 'Copyright, Council for British Columbia';
+    leftSpan.textContent = 'Copyright';
     footer.appendChild(leftSpan);
 
     // Right content (WhatsApp Link - loaded dynamically via authenticated API)
@@ -121,7 +121,7 @@
       })
       .then(data => {
         if (data.sha && data.sha !== 'unknown') {
-          leftSpan.textContent = `Copyright, Council for British Columbia - ${data.sha}--${data.date}`;
+          leftSpan.textContent = `Copyright - ${data.sha}--${data.date}`;
         }
       })
       .catch(err => {
