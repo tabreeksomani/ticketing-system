@@ -104,6 +104,7 @@
   let selectedDailySalesHubs = null; // null until first load, then a Set of hubIds
   let dailySalesFareFilter = 'all'; // 'all' | 'adult' | 'child' - which count field the day-by-day bars pivot on
   let dailyHubDropdownOpen = false; // whether the "N of M hubs" multiselect panel is expanded
+  let dailyHubOutsideHandlerAttached = false; // guard so the click-outside-to-close listener is bound only once
   let ingressData = null;
   let expandedIngressTrips = new Set();
   let ingressTripBreakdowns = {}; // tripId -> array, cached once fetched
@@ -591,7 +592,7 @@
                   <option value="adult" ${dailySalesFareFilter === 'adult' ? 'selected' : ''}>Adult</option>
                   <option value="child" ${dailySalesFareFilter === 'child' ? 'selected' : ''}>Child</option>
                 </select>
-                <div style="position:relative;">
+                <div id="dailyHubDropdownWrap" style="position:relative;">
                   <button id="dailyHubDropdownBtn" style="font-size:12px; font-weight:600; background:#F7F5F0; border:1px solid #E2D9C4; border-radius:8px; padding:8px 12px; cursor:pointer; color:#57534E; display:flex; align-items:center; gap:5px; min-height:36px;">
                     <span>${escapeHtml(hubSummaryLabel)}</span>${icon('chevronDown', 13)}
                   </button>
@@ -755,6 +756,19 @@
         dailyHubDropdownOpen = !dailyHubDropdownOpen;
         renderSalesHtml();
       };
+    }
+    // Click anywhere outside the dropdown closes it. Selecting hubs inside the
+    // panel keeps it open (multi-select), since those clicks stay within the
+    // wrapper. Bound once on document - it reads the live open flag each click,
+    // so it survives the full re-render that every interaction triggers.
+    if (!dailyHubOutsideHandlerAttached) {
+      dailyHubOutsideHandlerAttached = true;
+      document.addEventListener('click', (e) => {
+        if (dailyHubDropdownOpen && !e.target.closest('#dailyHubDropdownWrap')) {
+          dailyHubDropdownOpen = false;
+          renderSalesHtml();
+        }
+      });
     }
   }
 
