@@ -321,8 +321,8 @@
         const segWidth = (val / maxTotal) * 100;
         return `
           <div class="stack-seg" style="width:${segWidth}%; min-width:${val > 0 ? '2px' : '0'};">
-            <div style="height:100%; background:${colorForDay[d]}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:10px; font-weight:700;">
-              ${segWidth >= 6 ? val : ''}
+            <div style="height:100%; background:${colorForDay[d]}; display:flex; align-items:center; justify-content:center; overflow:visible;">
+              <span style="color:#fff; font-size:10px; font-weight:700; white-space:nowrap;">${val}</span>
             </div>
             <div class="stack-tooltip">${escapeHtml(h.hubName)} · ${escapeHtml(dayLabel(d))}: ${val}</div>
           </div>
