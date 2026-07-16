@@ -186,7 +186,7 @@
     // Dynamically adjust font size to fit long labels inside the ring
     let fontSize = opts.fontSize || Math.round(size * 0.22);
     if (label.length > 5) {
-      const maxFitSize = Math.floor((size - stroke * 1.5) / (label.length * 0.55));
+      const maxFitSize = Math.floor((size - stroke * 2.0) / (label.length * 0.58));
       fontSize = Math.min(fontSize, maxFitSize);
     }
 
@@ -196,7 +196,7 @@
         <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
           stroke-dasharray="${dash} ${c - dash}" stroke-linecap="round"
           transform="rotate(-90 ${size / 2} ${size / 2})" />
-        <text x="${size / 2}" y="${size / 2 + fontSize * 0.35}" text-anchor="middle" font-size="${fontSize}" fill="#241C10" font-weight="800">${label}</text>
+        <text x="${size / 2}" y="${size / 2 + fontSize * 0.35}" text-anchor="middle" font-size="${fontSize}" fill="#241C10" font-weight="800" stroke="#FFFFFF" stroke-width="2.5px" paint-order="stroke fill" stroke-linejoin="round">${label}</text>
       </svg>
     `;
   }
