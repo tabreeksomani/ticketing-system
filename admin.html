@@ -83,6 +83,9 @@
   .trip-menu-dropdown { position: absolute; top: calc(100% + 4px); right: 0; z-index: 10; background: #FFFFFF; border: 1px solid #E2D9C4; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.14); min-width: 170px; overflow: hidden; }
   .trip-menu-dropdown button { display: block; width: 100%; text-align: left; padding: 10px 14px; font-size: 12px; font-weight: 600; background: none; border: none; cursor: pointer; color: #241C10; }
   .trip-menu-dropdown button:hover { background: #F7F5F0; }
+  .stack-seg { position: relative; height: 100%; }
+  .stack-tooltip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #241C10; color: #FFFFFF; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.1s; z-index: 6; }
+  .stack-seg:hover .stack-tooltip { opacity: 1; }
   .trip-menu-dropdown button.danger { color: #B91C1C; }
 </style>
 </head>
@@ -98,6 +101,7 @@
   let dailySalesData = [];
   let selectedDailySalesHubs = null; // null until first load, then a Set of hubIds
   let dailySalesFareFilter = 'all'; // 'all' | 'adult' | 'child' - which count field the day-by-day bars pivot on
+  let dailyHubDropdownOpen = false; // whether the "N of M hubs" multiselect panel is expanded
   let ingressData = null;
   let expandedIngressTrips = new Set();
   let ingressTripBreakdowns = {}; // tripId -> array, cached once fetched
@@ -196,6 +200,112 @@
         </div>
       `;
     }).join('')}</div>`;
+  }
+
+  // One row per hub, stacked horizontally by that hub's own timeslots - each
+  // hub can have a different number/set of departure times, so this doesn't
+  // force a shared column layout the way a hub x timeslot matrix would.
+  // Horizontal (not vertical) specifically so this scales to many hubs: rows
+  // stack vertically and the page just scrolls further, instead of vertical
+  // bars getting squeezed into unreadable slivers once there are 8-10+ hubs
+  // side by side on a phone-width screen. Color is keyed by departure time
+  // and shared across every hub's row, so "6:00 PM" reads as the same color
+  // everywhere, making same-time comparison across hubs possible even though
+  // rows aren't the same length or segment count.
+  //
+  // Okabe-Ito palette (colorblind-safe: validated to stay distinguishable
+  // under deuteranopia, protanopia, and tritanopia) - the previous palette
+  // put a green and an amber-brown in adjacent segments, which is exactly
+  // the red/green confusion zone that trips up the most common form of
+  // color blindness.
+  const STACK_PALETTE = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#D55E00', '#56B4E9', '#8C734C', '#5C4A33'];
+  function stackedBarChart(hubs, opts = {}) {
+    const allTimes = [...new Set(hubs.flatMap(h => h.timeslots.map(t => formatDepartureTime(t.departureTime))))];
+    const colorForTime = {};
+    allTimes.forEach((t, i) => { colorForTime[t] = STACK_PALETTE[i % STACK_PALETTE.length]; });
+
+    const maxTotal = Math.max(1, ...hubs.map(h => h.timeslots.reduce((s, t) => s + t.sold, 0)));
+
+    const rows = hubs.map(h => {
+      const total = h.timeslots.reduce((s, t) => s + t.sold, 0);
+      const ordered = h.timeslots.filter(t => t.sold > 0);
+      const segments = ordered.map(t => {
+        const label = formatDepartureTime(t.departureTime);
+        const segWidth = (t.sold / maxTotal) * 100;
+        return `
+          <div class="stack-seg" style="width:${segWidth}%; min-width:${t.sold > 0 ? '2px' : '0'};">
+            <div style="height:100%; background:${colorForTime[label]}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:10px; font-weight:700;">
+              ${segWidth >= 6 ? t.sold : ''}
+            </div>
+            <div class="stack-tooltip">${escapeHtml(h.hubName)} · ${escapeHtml(label)}: ${t.sold}</div>
+          </div>
+        `;
+      }).join('');
+      return `
+        <div style="margin-bottom:14px;">
+          <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+            <span style="font-weight:700; color:#241C10;">${escapeHtml(h.hubName)}</span>
+            <span style="color:#756c5a;">${total}</span>
+          </div>
+          <div style="width:100%; height:26px; display:flex; border-radius:6px; overflow:hidden;">
+            ${segments}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const legend = `
+      <div style="display:flex; flex-wrap:wrap; gap:12px; margin-top:4px;">
+        ${allTimes.map(t => `
+          <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#57534E;">
+            <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${colorForTime[t]};"></span>${escapeHtml(t)}
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    return `<div>${rows}</div>${legend}`;
+  }
+
+  // Exact-number complement to the stacked bar above - one row per hub, one
+  // column per distinct departure time shared across hubs, "-" where a hub
+  // doesn't run that time. Only reasonable because the schedule is a small,
+  // shared set (a handful of times, same across hubs) - this would fall
+  // apart the way a matrix always does once hubs have truly independent,
+  // non-overlapping schedules.
+  function hubTimeslotMatrixHtml(hubs) {
+    const allRaw = [...new Set(hubs.flatMap(h => h.timeslots.map(t => t.departureTime)))].sort();
+    const colTotals = allRaw.map(raw => hubs.reduce((s, h) => {
+      const slot = h.timeslots.find(t => t.departureTime === raw);
+      return s + (slot ? slot.sold : 0);
+    }, 0));
+    const grandTotal = colTotals.reduce((a, b) => a + b, 0);
+
+    return `
+      <div class="table-wrap">
+        <table>
+          <tr><th>Hub</th>${allRaw.map(raw => `<th>${escapeHtml(formatDepartureTime(raw))}</th>`).join('')}<th>Total</th></tr>
+          ${hubs.map(h => {
+            const rowTotal = h.timeslots.reduce((s, t) => s + t.sold, 0);
+            return `
+              <tr>
+                <td>${escapeHtml(h.hubName)}</td>
+                ${allRaw.map(raw => {
+                  const slot = h.timeslots.find(t => t.departureTime === raw);
+                  return `<td>${slot ? slot.sold : '—'}</td>`;
+                }).join('')}
+                <td style="font-weight:700;">${rowTotal}</td>
+              </tr>
+            `;
+          }).join('')}
+          <tr style="font-weight:700;">
+            <td>Total</td>
+            ${colTotals.map(c => `<td>${c}</td>`).join('')}
+            <td>${grandTotal}</td>
+          </tr>
+        </table>
+      </div>
+    `;
   }
 
   // Horizontal proportion bar: e.g. "12 of 40 returned" - filled portion + remainder.
@@ -383,22 +493,57 @@
       </div>
 
       <div class="card">
-        <h2 class="section">Daily Sales by Hub</h2>
-        <div class="tabs" style="margin-bottom:12px;">
-          <div class="tab ${dailySalesFareFilter === 'all' ? 'active' : ''}" data-daily-fare="all">All</div>
-          <div class="tab ${dailySalesFareFilter === 'adult' ? 'active' : ''}" data-daily-fare="adult">Adult</div>
-          <div class="tab ${dailySalesFareFilter === 'child' ? 'active' : ''}" data-daily-fare="child">Child</div>
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
-          ${data.map(hub => `
-            <label style="display:flex; align-items:center; gap:6px; font-size:12px; background:#F7F5F0; border:1px solid #E2D9C4; border-radius:8px; padding:6px 10px; cursor:pointer;">
-              <input type="checkbox" data-daily-hub="${hub.hubId}" ${selectedDailySalesHubs.has(hub.hubId) ? 'checked' : ''} style="margin:0;" />
-              ${escapeHtml(hub.hubName)}
-            </label>
-          `).join('')}
-        </div>
+        ${(() => {
+          const allSelected = data.length > 0 && data.every(hub => selectedDailySalesHubs.has(hub.hubId));
+          const hubSummaryLabel = allSelected ? 'All hubs' : `${selectedDailySalesHubs.size} of ${data.length} hubs`;
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+              <h2 class="section" style="margin:0;">Daily Sales by Hub</h2>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <select id="dailyFareSelect" style="width:auto; margin:0; padding:8px 10px; font-size:12px; min-height:36px; border-radius:8px;">
+                  <option value="all" ${dailySalesFareFilter === 'all' ? 'selected' : ''}>All fares</option>
+                  <option value="adult" ${dailySalesFareFilter === 'adult' ? 'selected' : ''}>Adult</option>
+                  <option value="child" ${dailySalesFareFilter === 'child' ? 'selected' : ''}>Child</option>
+                </select>
+                <div style="position:relative;">
+                  <button id="dailyHubDropdownBtn" style="font-size:12px; font-weight:600; background:#F7F5F0; border:1px solid #E2D9C4; border-radius:8px; padding:8px 12px; cursor:pointer; color:#57534E; display:flex; align-items:center; gap:5px; min-height:36px;">
+                    <span>${escapeHtml(hubSummaryLabel)}</span>${icon('chevronDown', 13)}
+                  </button>
+                  ${dailyHubDropdownOpen ? `
+                    <div style="position:absolute; top:calc(100% + 4px); right:0; z-index:10; background:#FFFFFF; border:1px solid #E2D9C4; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.14); min-width:220px; max-height:280px; overflow-y:auto; padding:6px;">
+                      <div data-daily-select-all style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:6px; cursor:pointer; color:#8C734C;">
+                        ${allSelected ? 'Clear all' : 'Select all'}
+                      </div>
+                      <div style="border-top:1px solid #E8E1D3; margin:4px 0;"></div>
+                      ${data.map(hub => {
+                        const selected = selectedDailySalesHubs.has(hub.hubId);
+                        return `
+                          <div data-daily-hub="${hub.hubId}" style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:${selected ? '700' : '400'}; padding:8px 10px; border-radius:6px; cursor:pointer; background:${selected ? '#F3ECDD' : 'transparent'}; color:${selected ? '#241C10' : '#756c5a'};">
+                            <span style="width:16px; height:16px; flex-shrink:0; border-radius:4px; border:1.5px solid ${selected ? '#8C734C' : '#C9BFA8'}; background:${selected ? '#8C734C' : 'transparent'}; display:flex; align-items:center; justify-content:center; color:#fff;">${selected ? icon('check', 11) : ''}</span>
+                            <span>${escapeHtml(hub.hubName)}</span>
+                          </div>
+                        `;
+                      }).join('')}
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            </div>
+          `;
+        })()}
         ${days.length ? barChart(days.map(d => ({ label: d.slice(5), value: dayTotals[d], color: '#8C734C' })), { height: 120 }) : '<div class="empty">No sales yet.</div>'}
       </div>
+
+      ${data.length ? `
+        <div class="card">
+          <h2 class="section">Tickets Sold by Hub &amp; Timeslot</h2>
+          ${stackedBarChart(data, { height: 160 })}
+        </div>
+        <div class="card">
+          <h2 class="section">Tickets Sold, by Hub &amp; Timeslot </h2>
+          ${hubTimeslotMatrixHtml(data)}
+        </div>
+      ` : ''}
 
       ${data.length ? `
         <div class="card">
@@ -494,16 +639,37 @@
     });
 
     document.querySelectorAll('[data-daily-hub]').forEach(el => {
-      el.onchange = () => {
+      el.onclick = () => {
         const hubId = el.dataset.dailyHub;
-        if (el.checked) selectedDailySalesHubs.add(hubId);
-        else selectedDailySalesHubs.delete(hubId);
+        if (selectedDailySalesHubs.has(hubId)) selectedDailySalesHubs.delete(hubId);
+        else selectedDailySalesHubs.add(hubId);
         renderSalesHtml();
       };
     });
-    document.querySelectorAll('[data-daily-fare]').forEach(el => {
-      el.onclick = () => { dailySalesFareFilter = el.dataset.dailyFare; renderSalesHtml(); };
-    });
+    const selectAllEl = document.querySelector('[data-daily-select-all]');
+    if (selectAllEl) {
+      selectAllEl.onclick = () => {
+        const allSelected = data.length > 0 && data.every(hub => selectedDailySalesHubs.has(hub.hubId));
+        if (allSelected) {
+          selectedDailySalesHubs.clear();
+        } else {
+          data.forEach(hub => selectedDailySalesHubs.add(hub.hubId));
+        }
+        renderSalesHtml();
+      };
+    }
+    const dailyFareSelect = document.getElementById('dailyFareSelect');
+    if (dailyFareSelect) {
+      dailyFareSelect.onchange = () => { dailySalesFareFilter = dailyFareSelect.value; renderSalesHtml(); };
+    }
+    const dailyHubDropdownBtn = document.getElementById('dailyHubDropdownBtn');
+    if (dailyHubDropdownBtn) {
+      dailyHubDropdownBtn.onclick = (e) => {
+        e.stopPropagation();
+        dailyHubDropdownOpen = !dailyHubDropdownOpen;
+        renderSalesHtml();
+      };
+    }
   }
 
   // ============================================================= INGRESS ====
