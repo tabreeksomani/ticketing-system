@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { HttpError } = require('./errors');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://localhost:5432/ticketing_system',
@@ -32,9 +33,7 @@ async function rateLimitCheck(bucket) {
   const row = rows[0];
   if (row && row.locked_until && new Date(row.locked_until).getTime() > Date.now()) {
     const waitMin = Math.max(1, Math.ceil((new Date(row.locked_until).getTime() - Date.now()) / 60000));
-    const err = new Error(`Too many failed attempts. Try again in about ${waitMin} minute(s).`);
-    err.status = 429;
-    throw err;
+    throw new HttpError(`Too many failed attempts. Try again in about ${waitMin} minute(s).`, 429);
   }
 }
 
