@@ -49,12 +49,14 @@
   .login-card { max-width: 360px; width: 100%; }
   .pct-bar { background: #F1F0EC; border-radius: 6px; height: 6px; width: 100%; overflow: hidden; margin-top: 4px; }
   .pct-fill { height: 100%; border-radius: 6px; background: #8C734C; }
+  .volunteer-marker { display: inline-block; background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: 800; letter-spacing: 0.3px; padding: 1px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
 
   /* ---- charts ---- */
   .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 16px; }
   .stat-card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 12px; padding: 14px; text-align: center; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
   .stat-card .stat-icon { font-size: 18px; }
   .stat-card .stat-value { font-size: 22px; font-weight: 800; margin: 4px 0 2px; color: #241C10; }
+  .stat-card .stat-value.stat-value-long { font-size: 15px; margin: 9px 0 3px; }
   .stat-card .stat-label { font-size: 11px; color: #756c5a; }
   .bar-chart-wrap { display: flex; align-items: flex-end; gap: 10px; padding: 10px 4px 0; }
   .bar-chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
@@ -134,6 +136,16 @@
     return `${formatted} PT`;
   }
 
+  // Any departure before 4:00 AM (Pacific wall-clock) is a volunteer slot.
+  // Matched against the raw wall-clock text since departureTime is always
+  // Pacific wall-clock (see formatDepartureTime above). Mirrors the same
+  // rule used on volunteer.html.
+  function isVolunteerDeparture(raw) {
+    if (!raw) return false;
+    const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+    return !!m && +m[4] < 4;
+  }
+
   // For real TIMESTAMPTZ values (e.g. bus_trips.departed_at) - these are
   // genuine UTC instants, unlike departureTime's timezone-less free text, so
   // this converts properly via the browser's Intl timezone database instead
@@ -175,14 +187,21 @@
     const clamped = Math.min(1, Math.max(0, pct));
     const dash = c * clamped;
     const label = opts.label !== undefined ? opts.label : Math.round(clamped * 100) + '%';
-    const fontSize = opts.fontSize || Math.round(size * 0.22);
+    
+    // Dynamically adjust font size to fit long labels inside the ring
+    let fontSize = opts.fontSize || Math.round(size * 0.22);
+    if (label.length > 5) {
+      const maxFitSize = Math.floor((size - stroke * 2.0) / (label.length * 0.58));
+      fontSize = Math.min(fontSize, maxFitSize);
+    }
+
     return `
-      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="display:block;">
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="display:block; overflow:visible;">
         <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#F1F0EC" stroke-width="${stroke}" />
         <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
           stroke-dasharray="${dash} ${c - dash}" stroke-linecap="round"
           transform="rotate(-90 ${size / 2} ${size / 2})" />
-        <text x="${size / 2}" y="${size / 2 + fontSize * 0.35}" text-anchor="middle" font-size="${fontSize}" fill="#241C10" font-weight="800">${label}</text>
+        <text x="${size / 2}" y="${size / 2 + fontSize * 0.35}" text-anchor="middle" font-size="${fontSize}" fill="#241C10" font-weight="800" stroke="#FFFFFF" stroke-width="2.5px" paint-order="stroke fill" stroke-linejoin="round">${label}</text>
       </svg>
     `;
   }
@@ -466,6 +485,23 @@
     const totalAdult = data.reduce((s, h) => s + h.totalAdult, 0);
     const totalChild = data.reduce((s, h) => s + h.totalChild, 0);
 
+    // Volunteer slots = timeslots departing before 4:00 AM (Pacific). Flattened
+    // across all hubs so the Sales tab can summarize them on their own, since
+    // volunteers travel on those early runs. Standby tickets have no timeslot,
+    // so they're never volunteer slots.
+    const volunteerRows = [];
+    data.forEach(hub => {
+      hub.timeslots.forEach(t => {
+        if (isVolunteerDeparture(t.departureTime)) volunteerRows.push({ hubName: hub.hubName, ...t });
+      });
+    });
+    const volSold = volunteerRows.reduce((s, r) => s + r.sold, 0);
+    const volCapacity = volunteerRows.reduce((s, r) => s + r.capacity, 0);
+    const volAdult = volunteerRows.reduce((s, r) => s + r.adult, 0);
+    const volChild = volunteerRows.reduce((s, r) => s + r.child, 0);
+    const volBoarded = volunteerRows.reduce((s, r) => s + r.boarded, 0);
+    const volReturned = volunteerRows.reduce((s, r) => s + r.returned, 0);
+
     // Pivot dailySalesData (one row per hub+day) into one bar per day, summed
     // across whichever hubs are currently checked in the multiselect. Which
     // count field gets summed depends on the All/Adult/Child toggle.
@@ -486,10 +522,45 @@
       <div class="stat-row">
         <div class="stat-card"><div class="stat-icon">${icon('building', 20)}</div><div class="stat-value">${data.length}</div><div class="stat-label">Hubs</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${totalSlots}</div><div class="stat-label">Timeslots</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('ticket', 20)}</div><div class="stat-value">${totalSold}/${totalCapacity}</div><div class="stat-label">Tickets Sold</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('ticket', 20)}</div><div class="stat-value ${(`${totalSold}/${totalCapacity}`).length > 6 ? 'stat-value-long' : ''}">${totalSold}/${totalCapacity}</div><div class="stat-label">Tickets Sold</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${totalStandby}</div><div class="stat-label">Standby Issued</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalAdult}</div><div class="stat-label">Adult Tickets</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalChild}</div><div class="stat-label">Child Tickets</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${volSold}</div><div class="stat-label">Volunteer Tickets</div></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section">Volunteer Slots (departing before 4:00 AM)</h2>
+        ${volunteerRows.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr><th>Hub</th><th>Departure</th><th>Capacity</th><th>Allocated</th><th>Adult</th><th>Child</th><th>Remaining</th><th>Boarded</th><th>Returned</th></tr>
+              ${volunteerRows.map(r => `
+                <tr>
+                  <td>${escapeHtml(r.hubName)}</td>
+                  <td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(r.departureTime))}</span></td>
+                  <td>${r.capacity}</td>
+                  <td>${r.sold}</td>
+                  <td>${r.adult}</td>
+                  <td>${r.child}</td>
+                  <td>${r.available}</td>
+                  <td>${r.boarded}</td>
+                  <td>${r.returned}</td>
+                </tr>
+              `).join('')}
+              <tr style="font-weight:700;">
+                <td>Total</td><td></td>
+                <td>${volCapacity}</td>
+                <td>${volSold}</td>
+                <td>${volAdult}</td>
+                <td>${volChild}</td>
+                <td>${volCapacity - volSold}</td>
+                <td>${volBoarded}</td>
+                <td>${volReturned}</td>
+              </tr>
+            </table>
+          </div>
+        ` : '<div class="empty">No volunteer slots (no timeslots departing before 4:00 AM).</div>'}
       </div>
 
       <div class="card">
@@ -591,7 +662,7 @@
                 <tr><th>Departure</th><th>Capacity</th><th>Allocated</th><th>Adult</th><th>Child</th><th>Remaining</th><th>Boarded</th><th>Returned</th></tr>
                 ${hub.timeslots.map(t => `
                   <tr>
-                    <td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}</span></td>
+                    <td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="color:#8C734C;display:inline-flex;">${icon('bus', 15)}</span>${escapeHtml(formatDepartureTime(t.departureTime))}${isVolunteerDeparture(t.departureTime) ? '<span class="volunteer-marker">Volunteer</span>' : ''}</span></td>
                     <td>${t.capacity}</td>
                     <td>${t.sold}</td>
                     <td>${t.adult}</td>
@@ -1159,7 +1230,7 @@
     renderShell(`
       <div class="stat-row">
         <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${all.length}</div><div class="stat-label">Total Buses</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalOnboard}/${totalCapacity}</div><div class="stat-label">Onboard</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value ${(`${totalOnboard}/${totalCapacity}`).length > 6 ? 'stat-value-long' : ''}">${totalOnboard}/${totalCapacity}</div><div class="stat-label">Onboard</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.arrived.length}</div><div class="stat-label">Arrived</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${data.standby.total}</div><div class="stat-label">Standby Issued</div></div>
       </div>
