@@ -56,6 +56,7 @@
   .stat-card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 12px; padding: 14px; text-align: center; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
   .stat-card .stat-icon { font-size: 18px; }
   .stat-card .stat-value { font-size: 22px; font-weight: 800; margin: 4px 0 2px; color: #241C10; }
+  .stat-card .stat-value.stat-value-long { font-size: 15px; margin: 9px 0 3px; }
   .stat-card .stat-label { font-size: 11px; color: #756c5a; }
   .bar-chart-wrap { display: flex; align-items: flex-end; gap: 10px; padding: 10px 4px 0; }
   .bar-chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
@@ -411,7 +412,7 @@
       <div class="stat-row">
         <div class="stat-card"><div class="stat-icon">${icon('building', 20)}</div><div class="stat-value">${data.length}</div><div class="stat-label">Hubs</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${totalSlots}</div><div class="stat-label">Timeslots</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('ticket', 20)}</div><div class="stat-value">${totalSold}/${totalCapacity}</div><div class="stat-label">Tickets Sold</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('ticket', 20)}</div><div class="stat-value ${(`${totalSold}/${totalCapacity}`).length > 6 ? 'stat-value-long' : ''}">${totalSold}/${totalCapacity}</div><div class="stat-label">Tickets Sold</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${totalStandby}</div><div class="stat-label">Standby Issued</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalAdult}</div><div class="stat-label">Adult Tickets</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalChild}</div><div class="stat-label">Child Tickets</div></div>
@@ -1063,7 +1064,7 @@
     renderShell(`
       <div class="stat-row">
         <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${all.length}</div><div class="stat-label">Total Buses</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${totalOnboard}/${totalCapacity}</div><div class="stat-label">Onboard</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value ${(`${totalOnboard}/${totalCapacity}`).length > 6 ? 'stat-value-long' : ''}">${totalOnboard}/${totalCapacity}</div><div class="stat-label">Onboard</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.arrived.length}</div><div class="stat-label">Arrived</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${data.standby.total}</div><div class="stat-label">Standby Issued</div></div>
       </div>
