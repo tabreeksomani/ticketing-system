@@ -119,21 +119,31 @@
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
   // departureTime is stored as free-form text (whatever was typed in via psql
-  // when the timeslot was created), always meant as Pacific Time wall-clock -
-  // this prettifies it for display. Parsed manually (not via `new Date(raw)`)
-  // because a plain "new Date()" on a timezone-less string gets reinterpreted
-  // using the *viewer's own device* timezone, which would show a different
-  // clock time to someone viewing from outside Pacific. Falls back to the raw
-  // value if it doesn't match the expected shape.
+  // when the timeslot was created), always meant as Pacific Time wall-clock.
+  // This prettifies it into a 30-minute boarding window, e.g. "5-5:30 AM PT".
+  // The clock digits are formatted directly (not via `new Date(raw)`) because a
+  // plain "new Date()" on a timezone-less string gets reinterpreted using the
+  // *viewer's own device* timezone, which would show a different clock time to
+  // someone viewing from outside Pacific. The date is intentionally omitted -
+  // every departure is the same day. Falls back to the raw value if it doesn't
+  // match the expected shape.
   function formatDepartureTime(raw) {
     if (!raw) return '';
     const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
     if (!m) return raw;
-    const utc = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
-    const formatted = utc.toLocaleString('en-US', {
-      timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-    return `${formatted} PT`;
+    const startH = +m[4], startMin = +m[5];
+    const endTotal = startH * 60 + startMin + 30;
+    const endH = Math.floor(endTotal / 60) % 24, endMin = endTotal % 60;
+    const meridiem = (h) => (h < 12 ? 'AM' : 'PM');
+    const hour12 = (h) => (h % 12 === 0 ? 12 : h % 12);
+    const clock = (h, min) => (min === 0 ? `${hour12(h)}` : `${hour12(h)}:${String(min).padStart(2, '0')}`);
+    const startMer = meridiem(startH), endMer = meridiem(endH);
+    // Share one meridiem across the range when both ends agree (5-5:30 AM),
+    // otherwise show both (11:45 AM-12:15 PM).
+    const range = startMer === endMer
+      ? `${clock(startH, startMin)}-${clock(endH, endMin)} ${startMer}`
+      : `${clock(startH, startMin)} ${startMer}-${clock(endH, endMin)} ${endMer}`;
+    return `${range} PT`;
   }
 
   // Any departure before 4:00 AM (Pacific wall-clock) is a volunteer slot.
