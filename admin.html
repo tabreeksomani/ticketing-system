@@ -487,6 +487,7 @@
     ['sales', 'Sales'],
     ['ingress', 'Departing'],
     ['egress', 'Returning'],
+    ['report', 'Report'],
     // ['transport', 'Transport Buses'],
   ];
 
@@ -1191,6 +1192,159 @@
     }
   }
 
+  // ============================================================= REPORT ====
+  // A standalone "for leadership" view - built for screenshotting, not live
+  // day-to-day use, so it deliberately doesn't touch anything the Sales tab
+  // already renders. Fetches the same /dashboard/sales data (nothing new on
+  // the backend) but lays it out at a fixed, wider width matching the
+  // reference report, with a vertical stacked bar (fine at this fixed width -
+  // it's the live phone-width Sales tab where vertical bars get squeezed
+  // thin past ~8-10 hubs, not a screenshot rendered at report width).
+  let reportData = null;
+
+  async function renderReportTab() {
+    showLoadingIfEmpty();
+    try { reportData = await api('/dashboard/sales'); } catch (e) { showToast(e.message); return; }
+    renderReportHtml();
+  }
+
+  // "Volunteer" departures are any timeslot leaving before 4:00 AM; every
+  // other departure time (later overnight hours, or daytime) counts as
+  // "General" - a straight split on each timeslot's own departure_time, not
+  // a separate tracked field.
+  function isVolunteerDepartureTime(departureTimeRaw) {
+    const m = String(departureTimeRaw).match(/T(\d{2}):/);
+    return m ? parseInt(m[1], 10) < 4 : false;
+  }
+
+  function renderReportHtml() {
+    const data = reportData;
+    const totalSold = data.reduce((s, h) => s + h.totalSold, 0);
+    const totalAdult = data.reduce((s, h) => s + h.totalAdult, 0);
+    const totalChild = data.reduce((s, h) => s + h.totalChild, 0);
+    let volunteerDepartures = 0;
+    let generalDepartures = 0;
+    data.forEach(h => h.timeslots.forEach(t => {
+      if (isVolunteerDepartureTime(t.departureTime)) volunteerDepartures += t.sold;
+      else generalDepartures += t.sold;
+    }));
+
+    setTabBody(`
+      <div style="background:#F7F5F0; border-radius:14px; padding:16px;">
+        <h2 style="text-align:center; font-family:'Palatino Linotype', Georgia, serif; font-size:18px; color:#241C10; margin:0 0 4px;">Mulaqat Express — Sales by Time</h2>
+        <div style="text-align:center; font-size:11px; color:#756c5a; margin-bottom:16px;">Generated ${escapeHtml(formatTimestampPT(new Date().toISOString()))}</div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:32px;">
+          <div style="flex:1 1 28%; min-width:95px; background:#fff; border-radius:10px; padding:10px 6px; text-align:center; box-shadow:0 1px 3px rgba(140,115,76,0.08);">
+            <div style="font-size:22px; font-weight:400; color:#166534;">${totalSold.toLocaleString()}</div>
+            <div style="font-size:9.5px; font-weight:700; letter-spacing:0.3px; color:#756c5a; margin-top:2px;">TOTAL TICKETS SOLD</div>
+          </div>
+          <div style="flex:1 1 28%; min-width:95px; background:#fff; border-radius:10px; padding:10px 6px; text-align:center; box-shadow:0 1px 3px rgba(140,115,76,0.08);">
+            <div style="font-size:22px; font-weight:400; color:#241C10;">${totalAdult.toLocaleString()}</div>
+            <div style="font-size:9.5px; font-weight:700; letter-spacing:0.3px; color:#756c5a; margin-top:2px;">ADULT TICKETS</div>
+          </div>
+          <div style="flex:1 1 28%; min-width:95px; background:#fff; border-radius:10px; padding:10px 6px; text-align:center; box-shadow:0 1px 3px rgba(140,115,76,0.08);">
+            <div style="font-size:22px; font-weight:400; color:#241C10;">${totalChild.toLocaleString()}</div>
+            <div style="font-size:9.5px; font-weight:700; letter-spacing:0.3px; color:#756c5a; margin-top:2px;">CHILD TICKETS</div>
+          </div>
+          <div style="flex:1 1 28%; min-width:95px; background:#fff; border-radius:10px; padding:10px 6px; text-align:center; box-shadow:0 1px 3px rgba(140,115,76,0.08);">
+            <div style="font-size:22px; font-weight:400; color:#241C10;">${volunteerDepartures.toLocaleString()}</div>
+            <div style="font-size:9.5px; font-weight:700; letter-spacing:0.3px; color:#756c5a; margin-top:2px;">VOLUNTEER DEPARTURES</div>
+          </div>
+          <div style="flex:1 1 28%; min-width:95px; background:#fff; border-radius:10px; padding:10px 6px; text-align:center; box-shadow:0 1px 3px rgba(140,115,76,0.08);">
+            <div style="font-size:22px; font-weight:400; color:#241C10;">${generalDepartures.toLocaleString()}</div>
+            <div style="font-size:9.5px; font-weight:700; letter-spacing:0.3px; color:#756c5a; margin-top:2px;">GENERAL DEPARTURES</div>
+          </div>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:16px;">
+          <div style="flex:1 1 200px; min-width:0;">${verticalStackedBarChart(data)}</div>
+          <div style="flex:0 1 140px;">${verticalStackedBarLegend(data)}</div>
+        </div>
+      </div>
+    `);
+  }
+
+  // Vertical orientation, deliberately separate from the existing (horizontal)
+  // stackedBarChart used by the live Sales tab - this view renders at a fixed
+  // report width, so it doesn't hit the "many hubs squeezed thin" problem
+  // vertical bars have on a real phone screen.
+  // Monochromatic (light-to-dark, one hue family) rather than the
+  // colorblind-safe multi-hue STACK_PALETTE used elsewhere - this report
+  // expects at most 4 timeslots, and reads cleaner as one tonal ramp
+  // (earliest = lightest, latest = darkest) than as distinct hues. Scoped
+  // to this report only; doesn't touch STACK_PALETTE or its other uses.
+  const REPORT_MONO_PALETTE = ['#E5DFD1', '#C4B896', '#8C734C', '#5C4A33'];
+
+  function verticalStackedBarChart(hubs) {
+    const height = 320;
+    const allTimes = [...new Set(hubs.flatMap(h => h.timeslots.map(t => formatDepartureTime(t.departureTime))))];
+    const colorForTime = {};
+    allTimes.forEach((t, i) => { colorForTime[t] = REPORT_MONO_PALETTE[i % REPORT_MONO_PALETTE.length]; });
+    const maxTotal = Math.max(1, ...hubs.map(h => h.timeslots.reduce((s, t) => s + t.sold, 0)));
+
+    // The two lightest shades need dark text - white would be nearly
+    // invisible against them.
+    const textColorForTime = {};
+    allTimes.forEach((t, i) => { textColorForTime[t] = i < 2 ? '#241C10' : '#fff'; });
+
+    const bars = hubs.map(h => {
+      const total = h.timeslots.reduce((s, t) => s + t.sold, 0);
+      const barPixelHeight = Math.max(Math.round((total / maxTotal) * height), 2);
+      const ordered = h.timeslots.filter(t => t.sold > 0).slice().reverse();
+      const segments = ordered.map(t => {
+        const label = formatDepartureTime(t.departureTime);
+        const segHeight = Math.max(Math.round((t.sold / maxTotal) * height), 2);
+        return `
+          <div style="height:${segHeight}px; background:${colorForTime[label]}; display:flex; align-items:center; justify-content:center; color:${textColorForTime[label]}; font-size:11px; font-weight:700;">
+            ${segHeight >= 18 ? t.sold : ''}
+          </div>
+        `;
+      }).join('');
+      return `
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; align-items:center;">
+          <div style="width:100%; height:${height}px; position:relative;">
+            <div style="position:absolute; bottom:0; left:0; right:0; height:${barPixelHeight}px; display:flex; flex-direction:column; justify-content:flex-end; border-radius:6px 6px 0 0; overflow:hidden;">
+              ${segments}
+            </div>
+          </div>
+          <div style="width:100%; border-top:1px solid #D9D3C4;"></div>
+          <div style="font-size:11px; font-weight:700; color:#241C10; margin-top:6px; text-align:center; width:100%; word-break:break-word;">${escapeHtml(h.hubName)}</div>
+          <div style="font-size:13px; font-weight:400; color:#241C10; margin-top:2px;">${total}</div>
+        </div>
+      `;
+    }).join('');
+
+    // flex-start, not flex-end: each column is [total][fixed-height bar box]
+    // [name label] stacked top-to-bottom, and hub names wrap to a different
+    // number of lines - bottom-aligning the whole column would shift each
+    // bar's own baseline by however tall its trailing label happens to be.
+    // Top-aligning keeps every bar box starting (and, since they share one
+    // fixed height, ending) at the same position regardless of label height.
+    return `<div style="display:flex; align-items:flex-start; gap:8px;">${bars}</div>`;
+  }
+
+  function verticalStackedBarLegend(hubs) {
+    const allTimes = [...new Set(hubs.flatMap(h => h.timeslots.map(t => formatDepartureTime(t.departureTime))))];
+    const colorForTime = {};
+    allTimes.forEach((t, i) => { colorForTime[t] = REPORT_MONO_PALETTE[i % REPORT_MONO_PALETTE.length]; });
+    const totalForTime = {};
+    allTimes.forEach(t => {
+      totalForTime[t] = hubs.reduce((s, h) => s + h.timeslots.filter(x => formatDepartureTime(x.departureTime) === t).reduce((s2, x) => s2 + x.sold, 0), 0);
+    });
+
+    return `
+      <div style="font-size:11px; font-weight:700; letter-spacing:0.4px; color:#756c5a; margin-bottom:10px;">TIMESLOT</div>
+      ${allTimes.map(t => `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+          <span style="display:inline-block; width:16px; height:16px; border-radius:4px; background:${colorForTime[t]}; flex-shrink:0;"></span>
+          <div>
+            <div style="font-size:13px; font-weight:700; color:#241C10;">${escapeHtml(t)}</div>
+            <div style="font-size:12px; color:#756c5a;">${totalForTime[t]}</div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
   // =========================================================== TRANSPORT ====
   async function renderTransportTab() {
     showLoadingIfEmpty();
@@ -1260,6 +1414,7 @@
     if (tab === 'sales') renderSalesTab();
     else if (tab === 'ingress') renderIngressTab();
     else if (tab === 'egress') renderEgressTab();
+    else if (tab === 'report') renderReportTab();
     else if (tab === 'transport') renderTransportTab();
   }
 
