@@ -1208,13 +1208,13 @@
     renderReportHtml();
   }
 
-  // "Volunteer" departures are any timeslot leaving before 4:00 AM; every
-  // other departure time (later overnight hours, or daytime) counts as
-  // "General" - a straight split on each timeslot's own departure_time, not
-  // a separate tracked field.
+  // "Volunteer" departures are exactly the 2:00 AM and 3:00 AM timeslots;
+  // every other departure time counts as "General" - a straight split on
+  // each timeslot's own departure_time, not a separate tracked field.
   function isVolunteerDepartureTime(departureTimeRaw) {
     const m = String(departureTimeRaw).match(/T(\d{2}):/);
-    return m ? parseInt(m[1], 10) < 4 : false;
+    const hour = m ? parseInt(m[1], 10) : null;
+    return hour === 2 || hour === 3;
   }
 
   function renderReportHtml() {
@@ -1274,9 +1274,21 @@
   // to this report only; doesn't touch STACK_PALETTE or its other uses.
   const REPORT_MONO_PALETTE = ['#E5DFD1', '#C4B896', '#8C734C', '#5C4A33'];
 
+  // Chronological order by each timeslot's actual departure_time (not just
+  // first-seen order across hubs, which isn't guaranteed to be sorted once
+  // different hubs run different subsets of the shared timeslot schedule).
+  function sortedTimeslotLabels(hubs) {
+    const rawForLabel = {};
+    hubs.forEach(h => h.timeslots.forEach(t => {
+      const label = formatDepartureTime(t.departureTime);
+      if (!(label in rawForLabel)) rawForLabel[label] = t.departureTime;
+    }));
+    return Object.keys(rawForLabel).sort((a, b) => (rawForLabel[a] < rawForLabel[b] ? -1 : rawForLabel[a] > rawForLabel[b] ? 1 : 0));
+  }
+
   function verticalStackedBarChart(hubs) {
     const height = 320;
-    const allTimes = [...new Set(hubs.flatMap(h => h.timeslots.map(t => formatDepartureTime(t.departureTime))))];
+    const allTimes = sortedTimeslotLabels(hubs);
     const colorForTime = {};
     allTimes.forEach((t, i) => { colorForTime[t] = REPORT_MONO_PALETTE[i % REPORT_MONO_PALETTE.length]; });
     const maxTotal = Math.max(1, ...hubs.map(h => h.timeslots.reduce((s, t) => s + t.sold, 0)));
@@ -1323,7 +1335,7 @@
   }
 
   function verticalStackedBarLegend(hubs) {
-    const allTimes = [...new Set(hubs.flatMap(h => h.timeslots.map(t => formatDepartureTime(t.departureTime))))];
+    const allTimes = sortedTimeslotLabels(hubs);
     const colorForTime = {};
     allTimes.forEach((t, i) => { colorForTime[t] = REPORT_MONO_PALETTE[i % REPORT_MONO_PALETTE.length]; });
     const totalForTime = {};
