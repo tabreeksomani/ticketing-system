@@ -1212,7 +1212,11 @@
   // every other departure time counts as "General" - a straight split on
   // each timeslot's own departure_time, not a separate tracked field.
   function isVolunteerDepartureTime(departureTimeRaw) {
-    const m = String(departureTimeRaw).match(/T(\d{2}):/);
+    // Same date/time separator handling as formatDepartureTime - production
+    // stores this as "YYYY-MM-DD HH:MM:SS <timezone>" (space-separated, plus
+    // a trailing zone name), not the "T"-separated ISO shape local test data
+    // happened to use.
+    const m = String(departureTimeRaw).match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}):/);
     const hour = m ? parseInt(m[1], 10) : null;
     return hour === 2 || hour === 3;
   }
