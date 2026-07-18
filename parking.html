@@ -166,7 +166,7 @@
   // ============================================================== login ====
   async function renderLogin() {
     let logins = [];
-    try { logins = await api('/auth/login-ids?role=parking'); } catch (e) { /* form still renders; submit will surface the error */ }
+    try { logins = await api('/auth/login-ids?app=parking'); } catch (e) { /* form still renders; submit will surface the error */ }
     const options = logins.map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)}</option>`).join('');
     document.getElementById('app').innerHTML = `
       <div class="login-screen">

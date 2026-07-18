@@ -452,7 +452,7 @@
 
   async function renderHubLogin() {
     let logins = [];
-    try { logins = await api(null, '/auth/login-ids?role=volunteer'); } catch (e) { /* form still renders */ }
+    try { logins = await api(null, '/auth/login-ids?app=checkins'); } catch (e) { /* form still renders */ }
     document.getElementById('roleArea').innerHTML = `
       <div class="card login-card">
         <label>Login</label>
