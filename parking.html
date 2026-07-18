@@ -307,6 +307,18 @@
     const selected = lots.find(l => l.id === selectedLotId) || null;
     let html = '';
 
+    html += `<div class="section-label">Select a lot to update</div>`;
+    html += lots.length ? lots.map(l => {
+      const isAvail = l.status === 'available';
+      const openTxt = isAvail && l.availableStalls !== null && l.availableStalls !== undefined ? ` · ${l.availableStalls} open` : '';
+      return `
+        <button class="pill ${l.id === selectedLotId ? 'selected' : ''}" data-lot="${l.id}">
+          <span><span class="name">${escapeHtml(l.name)}</span>
+          <span class="meta">${isAvail ? '🟢 Available' : '🔴 Full'}${openTxt} · ${escapeHtml(fmtDistance(l))}</span></span>
+          <span class="chevron">›</span>
+        </button>`;
+    }).join('') : '<div class="empty">No parking lots yet. Ask a parking admin to add one.</div>';
+
     if (selected) {
       const isAvail = selected.status === 'available';
       html += `
@@ -325,18 +337,6 @@
           <button class="btn btn-outline" id="pickAnother">Choose a different lot</button>
         </div>`;
     }
-
-    html += `<div class="section-label">Select a lot to update</div>`;
-    html += lots.length ? lots.map(l => {
-      const isAvail = l.status === 'available';
-      const openTxt = isAvail && l.availableStalls !== null && l.availableStalls !== undefined ? ` · ${l.availableStalls} open` : '';
-      return `
-        <button class="pill ${l.id === selectedLotId ? 'selected' : ''}" data-lot="${l.id}">
-          <span><span class="name">${escapeHtml(l.name)}</span>
-          <span class="meta">${isAvail ? '🟢 Available' : '🔴 Full'}${openTxt} · ${escapeHtml(fmtDistance(l))}</span></span>
-          <span class="chevron">›</span>
-        </button>`;
-    }).join('') : '<div class="empty">No parking lots yet. Ask a parking admin to add one.</div>';
 
     document.getElementById('view').innerHTML = html;
 
