@@ -1,34 +1,47 @@
 # Check-in Flow — Team Walkthrough
 
 This describes how the shuttle check-in system (`checkin.html`) works end to end: the
-full round trip a rider takes, who's responsible for each step, and exactly what each
-role sees and does. Use this to walk the team through training.
+full trip a rider takes, who's responsible for each step, and exactly what each role
+sees and does. Use this to walk the team through training.
 
 ## The journey, in one picture
 
-Every rider makes a 4-leg round trip. Each leg is its own independent bus trip — a bus
-isn't tracked across legs, so a bus that just did an O1 run doesn't "remember" that
-trip once it's time to do an R2 run later.
+Every rider makes a round trip. Each leg is its own independent bus trip — a bus isn't
+tracked across legs, so a bus that just did an O1 run doesn't "remember" that trip once
+it's time to do an R2 run later.
+
+**Outbound has two possible paths**, chosen per-trip by whoever's at the hub:
 
 ```
- Hub                Central              Venue
-  |--- O1 (bus) --->  |--- O2 (bus) --->   |
-  |                   |                    |  (event happens)
-  |<-- R2 (bus) ----  |<-- R1 (bus) -----  |
+ Hub                 Central              Venue
+  |--- O1 (bus) ---->  |--- O2 (bus) --->   |
+  |------------------- O1 direct to VCC --->|   (event happens)
+  |<-- R2 (bus) -----  ×  (no R1 anymore)    |
 ```
 
-| Leg | From → To         | Created/boarded by | Marked arrived by |
-|-----|--------------------|---------------------|--------------------|
-| O1  | Hub → Central      | Hub volunteer       | Central            |
-| O2  | Central → Venue    | Central             | Venue              |
-| R1  | Venue → Central    | Venue               | Central            |
-| R2  | Central → Hub      | Central             | Hub volunteer      |
+- **O1 → Central** (the default): the usual relay through Central, then O2 onward to
+  the venue.
+- **O1 → VCC**: the same O1 trip, but the hub volunteer picks "VCC" as the destination
+  instead of "Central" — the bus goes straight to the venue, skipping Central and O2
+  entirely for those riders.
+- **The way home is R2 only, and it isn't tracked end to end.** There is no R1
+  (Venue → Central) leg anymore — Venue doesn't scan anyone leaving. R2 itself is
+  created and boarded at Central, but nobody scans or taps to confirm it actually made
+  it back to the hub — that "mark arrived" step is gone too. The last tracked moment
+  for a returning rider is boarding the R2 bus at Central; everything after that (the
+  drive home, arrival) is untracked.
 
-Note the pattern: whoever creates/boards a trip is at the *origin*; whoever marks it
-arrived is at the *destination*. The one exception — either side can mark a trip
-arrived, not just the receiving end. This is so a volunteer who physically rides along
-with the bus can confirm arrival themselves without needing a separate login at the
-other end.
+| Leg | From → To                  | Created/boarded by | Marked arrived by |
+|-----|------------------------------|---------------------|--------------------|
+| O1  | Hub → **Central or VCC**     | Hub volunteer       | Central (if →Central) or Venue (if →VCC), decided per-trip |
+| O2  | Central → Venue              | Central             | Venue              |
+| R2  | Central → Hub                | Central             | *Nobody* — untracked, same as R1 |
+
+Whoever creates/boards a trip is at the *origin*; whoever marks it arrived is at the
+*destination* — except O1 (destination chosen per-trip) and R2 (nobody marks it arrived
+at all anymore). Elsewhere, either side of a leg can mark it arrived, not just the
+receiving end, so a volunteer who physically rides along with the bus can confirm
+arrival themselves without a separate login at the other end.
 
 ## Signing in
 
@@ -50,24 +63,26 @@ pages, and only shows up for whichever role tab is currently active and signed i
 
 ## Hub volunteer
 
-**Tabs: Departures / Arrivals**
+**One tab: Departures only.** Hub's job is entirely outbound now — there's no arrivals
+screen, since R2 (the bus bringing riders back) is no longer confirmed arrived by
+anyone (see above).
 
-### Departures (O1 — Hub → Central)
-1. Tap **New Trip**, enter the bus's license plate.
-2. Scan tickets one at a time as riders board. Each scan shows a running onboard count.
-3. If a scanned code isn't a real ticket, the system treats it as a forgotten-ticket
-   walk-up: it creates a new standby ticket tied to your hub on the spot and boards it
-   immediately — no separate step needed.
-4. Once at least one person has boarded, **Mark Departed** becomes available. Tap it
+### Departures (O1 — Hub → Central *or* VCC)
+1. Tap **New Trip**.
+2. Pick the **Destination**: **Central** (default) or **VCC**. Central is the normal
+   relay-through-the-middle route; VCC sends the bus straight to the venue, skipping
+   Central and O2 for everyone on it. This choice is shown clearly on the trip list and
+   the scanning screen afterward, so it's always obvious which one a given bus is doing.
+3. Enter the bus's license plate.
+4. Scan tickets one at a time as riders board. Each scan shows a running onboard count.
+5. **Lost/forgotten ticket?** Scan or type any code that isn't a real ticket and the
+   system treats it as a walk-up standby: it creates a new ticket tied to your hub on
+   the spot and boards it immediately, no separate step needed. (This same
+   forgotten-ticket handling now works on Central's legs too — see below.)
+6. Once at least one person has boarded, **Mark Departed** becomes available. Tap it
    when the bus is full and ready to leave.
-5. A ticket can only board a given O1 trip once — rescanning the same code again (same
-   leg) is rejected.
-
-### Arrivals (R2 — Central → Hub)
-- Shows buses currently en route back to your hub.
-- Tap **Mark Arrived** once the bus has physically pulled in. (Central may have already
-  done this if a volunteer rode along — either side marking it is fine, whichever
-  happens first "wins.")
+7. A ticket can only board a given O1 trip once — rescanning the same code again is
+   rejected.
 
 ### The hub switcher (multi-hub logins only)
 If your login covers more than one hub, a "Current Location" dropdown sits at the top
@@ -85,12 +100,10 @@ most important thing to get right in training if you have multi-hub volunteers.
 
 Central sits in the middle of the journey and has three separate jobs, one per tab.
 
-### Arrivals (O1 + R1 — buses arriving from Hubs and from Venue)
-- Shows every bus currently en route to Central, from either direction, in one list.
+### Arrivals (buses arriving from Hubs — Central-bound O1 trips only)
+- Shows every O1 bus currently en route to Central (i.e. hub buses that picked
+  "Central," not "VCC," as their destination).
 - Tap **Mark Arrived** as each bus pulls in.
-- Since this list combines two different legs, check the route label on each card
-  (e.g. "Surrey → Central" vs. "Venue → Central") rather than relying on list order —
-  the two legs aren't interleaved by time, just listed one after the other.
 
 ### Send to Venue (O2 — Central → Venue)
 - Same shape as Hub's Departures: New Trip → license plate → scan tickets → Mark
@@ -99,31 +112,42 @@ Central sits in the middle of the journey and has three separate jobs, one per t
   boarded their O1 leg (so you can visually catch someone trying to board out of
   order) — but it never blocks the scan. Riders who arranged their own transport to
   Central are allowed to board O2 without ever having boarded an O1 bus.
+- **Lost ticket at this stage?** Same forgotten-ticket flow as Hub — but since a rider
+  showing up here could be from *any* hub, you'll be asked to pick which hub they're
+  from before the standby ticket is issued. Get this right: it's what lets that rider
+  board the correct R2 bus home later.
 
 ### Send to Hub (R2 — Central → each rider's home hub)
-- **You do not decide which hub gets the next bus — admin calls that.** Once admin
-  tells you (in person, since you're both at Central), pick that hub from the
-  **Destination Hub** dropdown, enter the license plate, and create the trip.
-- Each option in the dropdown shows a live waiting count for that hub — that's there so
-  you can sanity-check what admin told you against what you're seeing, not so you can
-  make the call yourself.
+- **You do not decide which hub gets the next bus — admin calls that**, in person,
+  since you're both at Central. There's no "waiting count" shown here anymore to hint
+  at it (see the callout below on why) — it's purely admin's real-world call, relayed
+  to you verbally.
+- Pick that hub from the **Destination Hub** dropdown, enter the license plate, and
+  create the trip.
 - Scan tickets same as any other leg. **One thing R2 checks that others don't:** if a
   scanned ticket's home hub doesn't match the hub this bus is signed for, you'll get an
   amber "Wrong bus" warning and the scan is rejected — that ticket belongs on a
-  different R2 bus. This is the one leg where a mis-scan is actively caught by the
-  system instead of just relying on the volunteer to notice.
+  different R2 bus.
+- Lost ticket on an R2 bus works too, and needs no extra prompt — the standby is
+  automatically tied to whichever hub this specific bus is headed to.
 
 ---
 
 ## Venue
 
-**Tabs: Arrivals / Departures**
+**Tab: Arrivals only**
 
-### Arrivals (O2 — Central → Venue)
-- Shows buses en route from Central. Tap **Mark Arrived** as each pulls in.
+Venue's job is purely receiving buses — there is no departures/scanning step for the
+way home anymore.
 
-### Departures (R1 — Venue → Central)
-- Same New Trip → scan → Mark Departed pattern as every other origin-side tab.
+### Arrivals (buses arriving from Central, or straight from a Hub)
+- Shows two kinds of incoming buses in one list, distinguished by their route label:
+  regular **O2** buses from Central, and any **O1** bus a hub volunteer sent straight to
+  VCC instead of via Central.
+- Tap **Mark Arrived** as each pulls in.
+
+After this, riders have no further tracked step until they board an R2 bus back to
+their home hub at Central — there's nothing to scan in between.
 
 ---
 
@@ -135,14 +159,20 @@ scan/board interface — dispatch decisions get relayed to Central verbally sinc
 co-located.
 
 ### Dashboards (`admin.html`)
-- **Sales**: per-hub timeslot capacity/allocation/boarded/returned, plus a Standby row
-  and daily sales chart.
+- **Sales**: per-hub timeslot capacity/allocation/boarded/returned, a Standby row,
+  Adult/Child fare split, and daily sales charts.
 - **Departing** (O1/O2 funnel): Departed Hubs (cumulative) → En Route to Central → At
-  Central → En Route to Venue → Arrived at Venue, plus Avg Wait at Central.
-- **Returning** (R1/R2 funnel): mirror image, plus **Waiting at Central, by Hub** — this
-  is the number you use to decide which hub gets the next R2 bus. It also shows
-  "En Route to Central" per hub so you can see what's about to add to the backlog, not
-  just what's already waiting.
+  Central → En Route to Venue → Arrived at Venue, plus Avg Wait at Central. Only counts
+  Central-bound O1 trips in the "En Route/At Central" stages — a VCC-direct trip skips
+  straight to "En Route to Venue"/"Arrived at Venue" instead, since it never touches
+  Central at all.
+- **Returning** (R2 only): just one number, grouped by destination hub — total riders
+  who've boarded an R2 bus for each hub. This used to be a multi-stage funnel mirroring
+  Departing, but that depended on R1 tracking data that can no longer exist once Venue
+  stopped scanning departures — so it's deliberately simple now: a running total, not a
+  live snapshot of who's "waiting."
+- **Report**: a separate, screenshot-friendly view built for sending to leadership —
+  fixed layout, not meant for day-to-day monitoring like the other three tabs.
 
 ### Status overrides
 Every trip card (Departing/Returning tabs) has a 3-dot menu for fixing a mis-tap,
@@ -159,15 +189,15 @@ trip, that has to be handled as a one-off outside the app for now.
 
 ## Ticket lifecycle, at a glance
 
-A ticket carries four independent leg records (`trip1`–`trip4`, one per O1/O2/R1/R2).
-Each can only be set once — a ticket can't board the same leg twice, but boarding one
-leg has no effect on the others.
+A ticket carries independent leg records, one per leg it actually travels
+(`trip1`/`trip2`/`trip4` for O1/O2/R2 — `trip3`/R1 is defined in the schema but nothing
+writes to it anymore). Each can only be set once — a ticket can't board the same leg
+twice, but boarding one leg has no effect on the others.
 
 | Leg | What "boarded" means for a ticket |
 |-----|-------------------------------------|
-| O1  | Scanned onto a Hub→Central bus |
+| O1  | Scanned onto a Hub→Central or Hub→VCC bus |
 | O2  | Scanned onto a Central→Venue bus |
-| R1  | Scanned onto a Venue→Central bus |
 | R2  | Scanned onto a Central→Hub bus (must match the ticket's home hub) |
 
 "Boarded" and "Returned" on the Sales dashboard are computed from these fields directly
@@ -175,10 +205,16 @@ leg has no effect on the others.
 
 ## Training priorities, if time is short
 
-1. **Hub multi-hub switcher** — the one mistake that fails silently instead of erroring.
-2. **Central's three tabs** — make sure whoever's at Central knows which tab covers
-   which direction before the event starts; it's the only station juggling three jobs.
-3. **R2's wrong-hub warning** — good news, the system catches this one for you; just
+1. **Hub's Central vs. VCC choice** — new, and it changes who's responsible for marking
+   that specific trip arrived (Central or Venue). Make sure hub volunteers understand
+   both options exist and pick deliberately, not by habit.
+2. **Hub multi-hub switcher** — the one mistake that fails silently instead of erroring.
+3. **Central's three tabs**, especially that Send to Hub no longer shows any waiting
+   count — the dispatch call is 100% admin telling you verbally now.
+4. **R2's wrong-hub warning** — good news, the system catches this one for you; just
    make sure volunteers know an amber toast means "try a different bus," not "broken."
-4. Everything else (Hub Departures/Arrivals, Venue's two tabs) is scan → button →
-   confirm, and shouldn't need more than a couple minutes of walkthrough per person.
+5. **Lost tickets can be handled anywhere now** (Hub, Central's two departure tabs), not
+   just at the hub — just know that on Central's "Send to Venue" screen specifically,
+   you'll be asked which hub the rider is from.
+6. Everything else (Hub's single tab, Venue's single tab) is scan → button → confirm,
+   and shouldn't need more than a couple minutes of walkthrough per person.

@@ -106,11 +106,10 @@
   let ingressTripBreakdowns = {}; // tripId -> array, cached once fetched
   let selectedIngressHubs = null; // null until first load, then a Set of hubIds - filters O1 trip cards by origin hub
   let ingressLegFilter = 'all'; // 'all' | 'O1' | 'O2' - single-select, since the hub pills can't filter O2 at all (its origin is always "central", not a real hub)
+  let ingressHubDropdownOpen = false; // whether the "N of M hubs" multiselect panel is expanded
   let egressData = null;
   let expandedEgressTrips = new Set();
   let egressTripBreakdowns = {}; // tripId -> array, cached once fetched
-  let selectedEgressHubs = null; // null until first load, then a Set of hubIds - filters R2 trip cards by destination hub
-  let egressLegFilter = 'all'; // 'all' | 'R1' | 'R2' - single-select, since the hub pills can't filter R1 at all (its destination is always "central", not a real hub)
   let openTripMenu = null; // tripId of the one trip-card 3-dot menu currently open, or null
 
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -425,6 +424,72 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     overlay.querySelector('#confirmCancelBtn').onclick = () => overlay.remove();
     overlay.querySelector('#confirmOkBtn').onclick = () => { overlay.remove(); onConfirm(); };
+  }
+
+  // Destination options depend on the leg - O1 picks between Central/VCC,
+  // R2 picks a real hub (fetched fresh since the trip menu can be opened
+  // from either the ingress or egress tab, neither of which always has a
+  // hub list loaded).
+  async function showDestinationModal(trip, onConfirm) {
+    let optionsHtml;
+    if (trip.leg === 'O1') {
+      optionsHtml = `
+        <option value="central" ${trip.destination === 'central' ? 'selected' : ''}>Central</option>
+        <option value="venue" ${trip.destination === 'venue' ? 'selected' : ''}>VCC</option>
+      `;
+    } else {
+      let hubs;
+      try { hubs = await api('/trips/hub-headcounts'); } catch (e) { showToast(e.message); return; }
+      optionsHtml = hubs.map(h => `<option value="${h.id}" ${trip.destination === h.id ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('');
+    }
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:320px;width:100%;margin:0;">
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Change destination for ${escapeHtml(trip.licensePlate)}</div>
+        <select id="destinationSelect" style="width:100%;padding:10px;border-radius:8px;border:1px solid #D8CDB8;margin-bottom:16px;font-size:14px;">
+          ${optionsHtml}
+        </select>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline" id="destCancelBtn" style="flex:1;">Cancel</button>
+          <button class="btn btn-primary" id="destOkBtn" style="flex:1;">Save</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#destCancelBtn').onclick = () => overlay.remove();
+    overlay.querySelector('#destOkBtn').onclick = () => {
+      const destination = overlay.querySelector('#destinationSelect').value;
+      overlay.remove();
+      onConfirm(destination);
+    };
+  }
+
+  function showEditPlateModal(trip, onConfirm) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:320px;width:100%;margin:0;">
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Edit license plate</div>
+        <input id="editPlateInput" autocomplete="off" value="${escapeHtml(trip.licensePlate)}" style="width:100%;padding:10px;border-radius:8px;border:1px solid #D8CDB8;margin-bottom:16px;font-size:14px;box-sizing:border-box;" />
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline" id="editPlateCancelBtn" style="flex:1;">Cancel</button>
+          <button class="btn btn-primary" id="editPlateOkBtn" style="flex:1;">Save</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    const input = overlay.querySelector('#editPlateInput');
+    input.focus();
+    overlay.querySelector('#editPlateCancelBtn').onclick = () => overlay.remove();
+    overlay.querySelector('#editPlateOkBtn').onclick = () => {
+      const licensePlate = input.value.trim();
+      if (!licensePlate) return;
+      overlay.remove();
+      onConfirm(licensePlate);
+    };
   }
 
   function showToast(msg, kind) {
@@ -812,12 +877,12 @@
         ${data.hubs.length ? `
           <div class="table-wrap">
             <table>
-              <tr><th>Hub</th><th>Departed (Total)</th></tr>
+              <tr><th>Hub</th><th>Sold (Total)</th><th>Departed (Total)</th><th>Remaining</th></tr>
               ${data.hubs.map(h => `
-                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.departedTotal}</td></tr>
+                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.soldTotal}</td><td>${h.departedTotal}</td><td>${h.soldTotal - h.departedTotal}</td></tr>
               `).join('')}
               <tr style="font-weight:700;">
-                <td>Total</td><td>${data.departedHubTotal}</td>
+                <td>Total</td><td>${data.hubs.reduce((s, h) => s + h.soldTotal, 0)}</td><td>${data.departedHubTotal}</td><td>${data.hubs.reduce((s, h) => s + (h.soldTotal - h.departedTotal), 0)}</td>
               </tr>
             </table>
           </div>
@@ -835,16 +900,34 @@
           <div class="tab ${ingressLegFilter === 'O1' ? 'active' : ''}" data-ingress-leg="O1">To Central</div>
           <div class="tab ${ingressLegFilter === 'O2' ? 'active' : ''}" data-ingress-leg="O2">To Venue</div>
         </div>
-        ${ingressLegFilter !== 'O2' ? `
-          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
-            ${data.hubs.map(h => `
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px; background:${selectedIngressHubs.has(h.hubId) ? '#F3ECDD' : '#F7F5F0'}; border:1px solid ${selectedIngressHubs.has(h.hubId) ? '#8C734C' : '#E2D9C4'}; border-radius:20px; padding:6px 12px; cursor:pointer;">
-                <input type="checkbox" data-ingress-hub="${h.hubId}" ${selectedIngressHubs.has(h.hubId) ? 'checked' : ''} style="margin:0;" />
-                ${escapeHtml(h.hubName)}
-              </label>
-            `).join('')}
-          </div>
-        ` : ''}
+        ${ingressLegFilter !== 'O2' ? (() => {
+          const allHubsSelected = data.hubs.length > 0 && data.hubs.every(h => selectedIngressHubs.has(h.hubId));
+          const hubSummaryLabel = allHubsSelected ? 'All hubs' : `${selectedIngressHubs.size} of ${data.hubs.length} hubs`;
+          return `
+            <div style="margin-bottom:14px; position:relative; display:inline-block;">
+              <button id="ingressHubDropdownBtn" style="font-size:12px; font-weight:600; background:#F7F5F0; border:1px solid #E2D9C4; border-radius:8px; padding:8px 12px; cursor:pointer; color:#57534E; display:flex; align-items:center; gap:5px; min-height:36px;">
+                <span>${escapeHtml(hubSummaryLabel)}</span>${icon('chevronDown', 13)}
+              </button>
+              ${ingressHubDropdownOpen ? `
+                <div style="position:absolute; top:calc(100% + 4px); left:0; z-index:10; background:#FFFFFF; border:1px solid #E2D9C4; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.14); min-width:220px; max-height:280px; overflow-y:auto; padding:6px;">
+                  <div data-ingress-select-all style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:6px; cursor:pointer; color:#8C734C;">
+                    ${allHubsSelected ? 'Clear all' : 'Select all'}
+                  </div>
+                  <div style="border-top:1px solid #E8E1D3; margin:4px 0;"></div>
+                  ${data.hubs.map(h => {
+                    const selected = selectedIngressHubs.has(h.hubId);
+                    return `
+                      <div data-ingress-hub="${h.hubId}" style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:${selected ? '700' : '400'}; padding:8px 10px; border-radius:6px; cursor:pointer; background:${selected ? '#F3ECDD' : 'transparent'}; color:${selected ? '#241C10' : '#756c5a'};">
+                        <span style="width:16px; height:16px; flex-shrink:0; border-radius:4px; border:1.5px solid ${selected ? '#8C734C' : '#C9BFA8'}; background:${selected ? '#8C734C' : 'transparent'}; display:flex; align-items:center; justify-content:center; color:#fff;">${selected ? icon('check', 11) : ''}</span>
+                        <span>${escapeHtml(h.hubName)}</span>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              ` : ''}
+            </div>
+          `;
+        })() : ''}
         ${!data.trips.length ? '<div class="empty">No trips yet.</div>' : (() => {
           // The tab bar picks which leg(s) show at all; hub pills further
           // filter O1 by origin (only shown for All/To Central, since O2's
@@ -870,13 +953,30 @@
       el.onclick = () => toggleIngressTrip(parseInt(el.dataset.ingressTrip, 10));
     });
     document.querySelectorAll('[data-ingress-hub]').forEach(el => {
-      el.onchange = () => {
+      el.onclick = () => {
         const hubId = el.dataset.ingressHub;
-        if (el.checked) selectedIngressHubs.add(hubId);
-        else selectedIngressHubs.delete(hubId);
+        if (selectedIngressHubs.has(hubId)) selectedIngressHubs.delete(hubId);
+        else selectedIngressHubs.add(hubId);
         renderIngressHtml();
       };
     });
+    const ingressSelectAllEl = document.querySelector('[data-ingress-select-all]');
+    if (ingressSelectAllEl) {
+      ingressSelectAllEl.onclick = () => {
+        const allSelected = ingressData.hubs.length > 0 && ingressData.hubs.every(h => selectedIngressHubs.has(h.hubId));
+        if (allSelected) selectedIngressHubs.clear();
+        else ingressData.hubs.forEach(h => selectedIngressHubs.add(h.hubId));
+        renderIngressHtml();
+      };
+    }
+    const ingressHubDropdownBtn = document.getElementById('ingressHubDropdownBtn');
+    if (ingressHubDropdownBtn) {
+      ingressHubDropdownBtn.onclick = (e) => {
+        e.stopPropagation();
+        ingressHubDropdownOpen = !ingressHubDropdownOpen;
+        renderIngressHtml();
+      };
+    }
     document.querySelectorAll('[data-ingress-leg]').forEach(el => {
       el.onclick = () => { ingressLegFilter = el.dataset.ingressLeg; renderIngressHtml(); };
     });
@@ -902,6 +1002,24 @@
       actions.push({ action: 'undo-depart', label: 'Undo Departed', danger: true });
     }
     if (t.status === 'arrived') actions.push({ action: 'undo-arrive', label: 'Undo Arrived', danger: true });
+    // Only worth offering before anyone boards - once riders are on, their
+    // tickets are already tied to this trip's destination for downstream
+    // routing (see the backend's own gate on this).
+    if (t.status === 'scheduled' && (t.leg === 'O1' || t.leg === 'R2')) {
+      actions.push({ action: 'change-destination', label: 'Change Destination' });
+    }
+    // Unlike destination, the plate is just a label - nothing downstream is
+    // keyed off its value, so it's safe to fix even after boarding's
+    // started (a volunteer mid-scan who only now notices the plate's wrong
+    // shouldn't have to lose already-boarded riders to a delete instead).
+    if (t.status === 'scheduled' || t.status === 'boarding') {
+      actions.push({ action: 'edit-plate', label: 'Edit License Plate' });
+    }
+    // Only ever offered before anyone's boarded - same reasoning as above,
+    // and mirrors the backend's own onboard === 0 gate.
+    if (t.status === 'scheduled') {
+      actions.push({ action: 'delete', label: 'Delete Trip', danger: true });
+    }
     return actions;
   }
 
@@ -935,6 +1053,47 @@
         e.stopPropagation();
         const tripId = parseInt(el.dataset.tripId, 10);
         const action = el.dataset.tripAction;
+        if (action === 'change-destination') {
+          const list = kind === 'ingress' ? ingressData.trips : egressData.trips;
+          const trip = (list || []).find(t => t.tripId === tripId);
+          if (!trip) return;
+          openTripMenu = null;
+          showDestinationModal(trip, async (destination) => {
+            try {
+              await api(`/trips/${tripId}/destination`, { method: 'POST', body: JSON.stringify({ destination }) });
+              showToast('Destination updated', 'success');
+              if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+            } catch (e) { showToast(e.message); }
+          });
+          return;
+        }
+        if (action === 'delete') {
+          const list = kind === 'ingress' ? ingressData.trips : egressData.trips;
+          const trip = (list || []).find(t => t.tripId === tripId);
+          openTripMenu = null;
+          showConfirmModal(`Delete trip ${trip ? trip.licensePlate : ''}? This can't be undone.`, 'Delete Trip', async () => {
+            try {
+              await api(`/trips/${tripId}`, { method: 'DELETE' });
+              showToast('Trip deleted', 'success');
+              if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+            } catch (e) { showToast(e.message); }
+          });
+          return;
+        }
+        if (action === 'edit-plate') {
+          const list = kind === 'ingress' ? ingressData.trips : egressData.trips;
+          const trip = (list || []).find(t => t.tripId === tripId);
+          if (!trip) return;
+          openTripMenu = null;
+          showEditPlateModal(trip, async (licensePlate) => {
+            try {
+              await api(`/trips/${tripId}/license-plate`, { method: 'POST', body: JSON.stringify({ licensePlate }) });
+              showToast('License plate updated', 'success');
+              if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+            } catch (e) { showToast(e.message); }
+          });
+          return;
+        }
         const cfg = TRIP_ACTION_CONFIRM[action];
         showConfirmModal(cfg.message, cfg.label, async () => {
           try {
@@ -1016,14 +1175,15 @@
   // "Arrived at Hub" only mean something once broken down per hub, which is
   // why those two get their own tables up top instead of just a single
   // aggregate tile.
+  // R1 no longer has a boarding screen (see dashboard.js), so this only ever
+  // shows R2 (Central->Hub) trips now - one simple cumulative count grouped
+  // by destination hub, instead of the old multi-stage funnel that depended
+  // on R1 data which can't exist anymore.
   async function renderEgressTab() {
     showLoadingIfEmpty();
     let data;
     try { data = await api('/dashboard/egress'); } catch (e) { showToast(e.message); return; }
     egressData = data;
-    if (selectedEgressHubs === null) {
-      selectedEgressHubs = new Set(data.waitingPerHub.map(h => h.hubId));
-    }
     renderEgressHtml();
   }
 
@@ -1031,25 +1191,20 @@
     const data = egressData;
     setTabBody(`
       <div class="stat-row">
-        <div class="stat-card"><div class="stat-icon">${icon('building', 20)}</div><div class="stat-value">${data.departedVenueTotal}</div><div class="stat-label">Departed Venue (Total)</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToCentral}</div><div class="stat-label">En Route to Central</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.atCentralTotal}</div><div class="stat-label">At Central</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToHub}</div><div class="stat-label">En Route to Hub</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.arrivedAtHubTotal}</div><div class="stat-label">Arrived at Hub (Total)</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${data.avgWaitAtCentralMinutes !== null ? data.avgWaitAtCentralMinutes + 'm' : '—'}</div><div class="stat-label">Avg Wait at Central</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.total}</div><div class="stat-label">Returning to Hub (Total)</div></div>
       </div>
 
       <div class="card">
-        <h2 class="section">Waiting at Central, by Hub</h2>
-        ${data.waitingPerHub.length ? `
+        <h2 class="section">Returning to Hub, by Hub (Total)</h2>
+        ${data.perHub.length ? `
           <div class="table-wrap">
             <table>
-              <tr><th>Hub</th><th>Waiting</th><th>En Route to Central</th><th>Total</th></tr>
-              ${data.waitingPerHub.map(h => `
-                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.waitingCount}</td><td>${h.enRouteCount}</td><td>${h.waitingCount + h.enRouteCount}</td></tr>
+              <tr><th>Hub</th><th>Departed (Total)</th><th>Returned (Total)</th><th>Outstanding</th></tr>
+              ${data.perHub.map(h => `
+                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.departedTotal}</td><td>${h.count}</td><td>${h.departedTotal - h.count}</td></tr>
               `).join('')}
               <tr style="font-weight:700;">
-                <td>Total</td><td>${data.atCentralTotal}</td><td>${data.enRouteToCentral}</td><td>${data.atCentralTotal + data.enRouteToCentral}</td>
+                <td>Total</td><td>${data.perHub.reduce((s, h) => s + h.departedTotal, 0)}</td><td>${data.total}</td><td>${data.perHub.reduce((s, h) => s + (h.departedTotal - h.count), 0)}</td>
               </tr>
             </table>
           </div>
@@ -1057,55 +1212,10 @@
       </div>
 
       <div class="card">
-        <h2 class="section">Arrived at Hub, by Hub (Total)</h2>
-        ${data.arrivedPerHub.length ? `
-          <div class="table-wrap">
-            <table>
-              <tr><th>Hub</th><th>Arrived (Total)</th></tr>
-              ${data.arrivedPerHub.map(h => `
-                <tr><td>${escapeHtml(h.hubName)}</td><td>${h.count}</td></tr>
-              `).join('')}
-              <tr style="font-weight:700;">
-                <td>Total</td><td>${data.arrivedAtHubTotal}</td>
-              </tr>
-            </table>
-          </div>
-        ` : '<div class="empty">No hubs set up yet.</div>'}
-      </div>
-
-      <div class="card">
-        <h2 class="section">Bus Trips (Venue → Central → Hub)</h2>
-        <div style="display:flex; gap:16px; margin-bottom:14px; font-size:12px; color:#57534E;">
-          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8C734C;vertical-align:-1px;margin-right:5px;"></span>To Central</div>
-          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#059669;vertical-align:-1px;margin-right:5px;"></span>To Hub</div>
-        </div>
-        <div class="tabs" style="margin-bottom:14px;">
-          <div class="tab ${egressLegFilter === 'all' ? 'active' : ''}" data-egress-leg="all">All</div>
-          <div class="tab ${egressLegFilter === 'R1' ? 'active' : ''}" data-egress-leg="R1">To Central</div>
-          <div class="tab ${egressLegFilter === 'R2' ? 'active' : ''}" data-egress-leg="R2">To Hub</div>
-        </div>
-        ${egressLegFilter !== 'R1' ? `
-          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
-            ${data.waitingPerHub.map(h => `
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px; background:${selectedEgressHubs.has(h.hubId) ? '#F3ECDD' : '#F7F5F0'}; border:1px solid ${selectedEgressHubs.has(h.hubId) ? '#8C734C' : '#E2D9C4'}; border-radius:20px; padding:6px 12px; cursor:pointer;">
-                <input type="checkbox" data-egress-hub="${h.hubId}" ${selectedEgressHubs.has(h.hubId) ? 'checked' : ''} style="margin:0;" />
-                ${escapeHtml(h.hubName)}
-              </label>
-            `).join('')}
-          </div>
-        ` : ''}
+        <h2 class="section">Bus Trips (Central → Hub)</h2>
         ${!data.trips.length ? '<div class="empty">No trips yet.</div>' : (() => {
-          // The tab bar picks which leg(s) show at all; hub pills further
-          // filter R2 by destination (only shown for All/To Hub, since R1's
-          // destination is always "central" - not a real hub to filter by).
-          const trips = data.trips.filter(t => {
-            if (egressLegFilter !== 'all' && t.leg !== egressLegFilter) return false;
-            if (t.leg === 'R2') return selectedEgressHubs.has(t.destination);
-            return true;
-          });
-          if (!trips.length) return '<div class="empty">No trips match the current filters.</div>';
-          const enRoute = trips.filter(t => t.status !== 'arrived');
-          const completed = trips.filter(t => t.status === 'arrived');
+          const enRoute = data.trips.filter(t => t.status !== 'arrived');
+          const completed = data.trips.filter(t => t.status === 'arrived');
           return `
             <h2 class="section" style="font-size:11px;">En Route (${enRoute.length})</h2>
             ${enRoute.length ? enRoute.map(egressTripCardHtml).join('') : '<div class="empty">None right now.</div>'}
@@ -1117,17 +1227,6 @@
     `);
     document.querySelectorAll('[data-egress-trip]').forEach(el => {
       el.onclick = () => toggleEgressTrip(parseInt(el.dataset.egressTrip, 10));
-    });
-    document.querySelectorAll('[data-egress-hub]').forEach(el => {
-      el.onchange = () => {
-        const hubId = el.dataset.egressHub;
-        if (el.checked) selectedEgressHubs.add(hubId);
-        else selectedEgressHubs.delete(hubId);
-        renderEgressHtml();
-      };
-    });
-    document.querySelectorAll('[data-egress-leg]').forEach(el => {
-      el.onclick = () => { egressLegFilter = el.dataset.egressLeg; renderEgressHtml(); };
     });
     wireTripMenu('egress');
   }

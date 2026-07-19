@@ -10,12 +10,16 @@ router.get('/dashboard/sales', asyncHandler(async (req, res) => {
   const { rows: hubs } = await pool.query('SELECT * FROM hubs ORDER BY name ASC');
   const out = [];
   for (const hub of hubs) {
+    // "Returned" means boarded an R2 bus (trip4_id set), not "R2 marked
+    // arrived" - nobody marks R2 arrived anymore (mirrors R1, which was
+    // dropped entirely), so bus_trips.arrived_at for R2 would always be
+    // NULL and this would permanently read zero otherwise. Boarding the R2
+    // bus at Central is the last real signal this system has.
     const { rows: slotRows } = await pool.query(
       `SELECT t.*,
               (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id)::int AS sold,
               (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id AND tk.trip1_id IS NOT NULL)::int AS boarded,
-              (SELECT COUNT(*) FROM tickets tk JOIN bus_trips bt4 ON tk.trip4_id = bt4.id
-                WHERE tk.timeslot_id = t.id AND bt4.arrived_at IS NOT NULL)::int AS returned,
+              (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id AND tk.trip4_id IS NOT NULL)::int AS returned,
               (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id AND tk.fare_type = 'adult')::int AS adult,
               (SELECT COUNT(*) FROM tickets tk WHERE tk.timeslot_id = t.id AND tk.fare_type = 'child')::int AS child
        FROM timeslots t WHERE t.hub_id = $1 ORDER BY t.departure_time ASC`,
@@ -43,8 +47,7 @@ router.get('/dashboard/sales', asyncHandler(async (req, res) => {
               COUNT(*) FILTER (WHERE tk.trip1_id IS NOT NULL)::int AS boarded,
               COUNT(*) FILTER (WHERE tk.fare_type = 'adult')::int AS adult,
               COUNT(*) FILTER (WHERE tk.fare_type = 'child')::int AS child,
-              (SELECT COUNT(*) FROM tickets tk2 JOIN bus_trips bt4 ON tk2.trip4_id = bt4.id
-                WHERE tk2.hub_id = $1 AND tk2.is_standby = TRUE AND bt4.arrived_at IS NOT NULL)::int AS returned
+              COUNT(*) FILTER (WHERE tk.trip4_id IS NOT NULL)::int AS returned
        FROM tickets tk WHERE tk.hub_id = $1 AND tk.is_standby = TRUE`,
       [hub.id]
     );
@@ -112,15 +115,24 @@ router.get('/dashboard/daily-sales', asyncHandler(async (req, res) => {
 router.get('/dashboard/ingress', asyncHandler(async (req, res) => {
   await requireRole(req, ['admin']);
 
+  // A hub's O1 trip can go straight to Central (the usual path) or straight
+  // to the venue/VCC directly, bypassing O2 entirely. Direct-to-venue trips
+  // are excluded from the en-route/at-Central buckets (they were never
+  // headed there) and folded into en-route/arrived-at-venue instead, so they
+  // don't get permanently stuck showing as "At Central" (they'll never get a
+  // trip2_id, since they skip O2 altogether).
   const { rows: statRows } = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL)::int AS departed_hub_total,
-       COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL AND bt1.arrived_at IS NULL)::int AS en_route_to_central,
-       COUNT(*) FILTER (WHERE bt1.arrived_at IS NOT NULL AND t.trip2_id IS NULL)::int AS at_central,
-       COUNT(*) FILTER (WHERE bt2.departed_at IS NOT NULL AND bt2.arrived_at IS NULL)::int AS en_route_to_venue,
-       COUNT(*) FILTER (WHERE bt2.arrived_at IS NOT NULL)::int AS arrived_at_venue,
+       COUNT(*) FILTER (WHERE bt1.destination = 'central' AND bt1.departed_at IS NOT NULL AND bt1.arrived_at IS NULL)::int AS en_route_to_central,
+       COUNT(*) FILTER (WHERE bt1.destination = 'central' AND bt1.arrived_at IS NOT NULL AND t.trip2_id IS NULL)::int AS at_central,
+       COUNT(*) FILTER (WHERE
+            (bt2.departed_at IS NOT NULL AND bt2.arrived_at IS NULL)
+         OR (bt1.destination = 'venue' AND bt1.departed_at IS NOT NULL AND bt1.arrived_at IS NULL)
+       )::int AS en_route_to_venue,
+       COUNT(*) FILTER (WHERE bt2.arrived_at IS NOT NULL OR (bt1.destination = 'venue' AND bt1.arrived_at IS NOT NULL))::int AS arrived_at_venue,
        AVG(EXTRACT(EPOCH FROM (t.trip2_boarded_at - bt1.arrived_at)) / 60)
-         FILTER (WHERE bt1.arrived_at IS NOT NULL AND t.trip2_boarded_at IS NOT NULL) AS avg_wait_at_central_minutes
+         FILTER (WHERE bt1.destination = 'central' AND bt1.arrived_at IS NOT NULL AND t.trip2_boarded_at IS NOT NULL) AS avg_wait_at_central_minutes
      FROM tickets t
      LEFT JOIN bus_trips bt1 ON t.trip1_id = bt1.id
      LEFT JOIN bus_trips bt2 ON t.trip2_id = bt2.id`
@@ -128,8 +140,12 @@ router.get('/dashboard/ingress', asyncHandler(async (req, res) => {
 
   // Cumulative departed-hub total, broken down by hub - same "ever left,
   // regardless of what's happened since" definition as the aggregate above.
+  // sold_total is every ticket issued for that hub (including standby),
+  // regardless of whether it's boarded anything yet - so admin can subtract
+  // to see how many are still at the hub, not yet departed.
   const { rows: hubRows } = await pool.query(
     `SELECT h.id AS hub_id, h.name AS hub_name,
+            COUNT(*)::int AS sold_total,
             COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL)::int AS departed_total
      FROM tickets t
      JOIN hubs h ON h.id = t.hub_id
@@ -160,7 +176,7 @@ router.get('/dashboard/ingress', asyncHandler(async (req, res) => {
     enRouteToVenue: s.en_route_to_venue,
     arrivedAtVenue: s.arrived_at_venue,
     avgWaitAtCentralMinutes: s.avg_wait_at_central_minutes !== null ? Math.round(s.avg_wait_at_central_minutes) : null,
-    hubs: hubRows.map((r) => ({ hubId: r.hub_id, hubName: r.hub_name, departedTotal: r.departed_total })),
+    hubs: hubRows.map((r) => ({ hubId: r.hub_id, hubName: r.hub_name, soldTotal: r.sold_total, departedTotal: r.departed_total })),
     trips: tripRows.map((r) => ({
       tripId: r.id, leg: r.leg, licensePlate: r.license_plate,
       origin: r.origin, destination: r.destination, status: r.status,
@@ -169,88 +185,44 @@ router.get('/dashboard/ingress', asyncHandler(async (req, res) => {
   });
 }));
 
-// The return half of the journey (R1 venue->central, R2 central->hub) as
-// the mirror image of /dashboard/ingress. "Departed Venue" is cumulative
-// (same running-total convention as Ingress's "Departed Hub"). The other
-// four are live snapshots partitioning riders into mutually exclusive
-// buckets: enRouteToCentral -> atCentral -> enRouteToHub -> arrivedAtHub.
-//
-// `waitingPerHub` is the headline number for this dashboard - unlike
-// Ingress (where Venue is one destination for everybody), R2 destinations
-// vary per rider, so "at Central" only means something once broken down by
-// each ticket's home hub. Same for `arrivedPerHub`.
+// R1 (venue->central) no longer has a boarding screen (Venue's role dropped
+// it entirely - see checkin.html), so no ticket can ever get a trip3_id
+// again. That means any "waiting at Central" / "en route from Venue" style
+// metric can never be anything but permanently zero - not a real snapshot,
+// just dead data. R2 (central->hub) is unaffected by that (its own
+// boarding/departing/arriving doesn't depend on trip3_id at all), so this is
+// deliberately just a simple cumulative count of who's boarded an R2 bus,
+// grouped by destination hub - the one number that's still meaningful.
 router.get('/dashboard/egress', asyncHandler(async (req, res) => {
   await requireRole(req, ['admin']);
 
-  const { rows: statRows } = await pool.query(
-    `SELECT
-       COUNT(*) FILTER (WHERE bt3.departed_at IS NOT NULL)::int AS departed_venue_total,
-       COUNT(*) FILTER (WHERE bt3.departed_at IS NOT NULL AND bt3.arrived_at IS NULL)::int AS en_route_to_central,
-       COUNT(*) FILTER (WHERE bt3.arrived_at IS NOT NULL AND t.trip4_id IS NULL)::int AS at_central_total,
-       COUNT(*) FILTER (WHERE bt4.departed_at IS NOT NULL AND bt4.arrived_at IS NULL)::int AS en_route_to_hub,
-       COUNT(*) FILTER (WHERE bt4.arrived_at IS NOT NULL)::int AS arrived_at_hub_total,
-       AVG(EXTRACT(EPOCH FROM (t.trip4_boarded_at - bt3.arrived_at)) / 60)
-         FILTER (WHERE bt3.arrived_at IS NOT NULL AND t.trip4_boarded_at IS NOT NULL) AS avg_wait_at_central_minutes
-     FROM tickets t
-     LEFT JOIN bus_trips bt3 ON t.trip3_id = bt3.id
-     LEFT JOIN bus_trips bt4 ON t.trip4_id = bt4.id`
-  );
-
-  // Per hub, both waiting at Central (R1 arrived, R2 not yet boarded) and
-  // en route to Central (R1 departed Venue, not yet arrived) - shown side
-  // by side so dispatch decisions ("does hub X need an R2 bus now, or is
-  // one already about to fill up from what's still in transit?") can see
-  // both the current backlog and what's about to add to it. LEFT JOIN from
-  // hubs (not tickets) so every hub appears even at zero, same reasoning as
-  // GET /trips/hub-headcounts (which the "waiting" half of this mirrors).
-  const { rows: waitingRows } = await pool.query(
+  // LEFT JOIN from hubs (not tickets) so every hub appears even at zero.
+  // departedTotal (how many ever left this hub via O1) is included here too
+  // so it can sit right next to "returned," for a direct at-a-glance
+  // comparison without switching to the Departing tab.
+  const { rows: hubRows } = await pool.query(
     `SELECT h.id AS hub_id, h.name AS hub_name,
-            COUNT(t.id) FILTER (WHERE bt.arrived_at IS NOT NULL AND t.trip4_id IS NULL)::int AS waiting_count,
-            COUNT(t.id) FILTER (WHERE bt.departed_at IS NOT NULL AND bt.arrived_at IS NULL)::int AS en_route_count
+            COUNT(t.id) FILTER (WHERE bt4.id IS NOT NULL)::int AS count,
+            COUNT(t.id) FILTER (WHERE bt1.departed_at IS NOT NULL)::int AS departed_total
      FROM hubs h
      LEFT JOIN tickets t ON t.hub_id = h.id
-     LEFT JOIN bus_trips bt ON t.trip3_id = bt.id
+     LEFT JOIN bus_trips bt4 ON t.trip4_id = bt4.id
+     LEFT JOIN bus_trips bt1 ON t.trip1_id = bt1.id
      GROUP BY h.id, h.name
      ORDER BY h.name ASC`
   );
 
-  // Cumulative arrived-at-hub total, by hub.
-  const { rows: arrivedRows } = await pool.query(
-    `SELECT h.id AS hub_id, h.name AS hub_name,
-            COUNT(t.id) FILTER (WHERE bt.arrived_at IS NOT NULL)::int AS count
-     FROM hubs h
-     LEFT JOIN tickets t ON t.hub_id = h.id
-     LEFT JOIN bus_trips bt ON t.trip4_id = bt.id
-     GROUP BY h.id, h.name
-     ORDER BY h.name ASC`
-  );
-
-  // Every R1 (venue->central) and R2 (central->hub) trip, for the mini
-  // trip-card list - all statuses, not just en-route.
+  // Every R2 (central->hub) trip, for the mini trip-card list.
   const { rows: tripRows } = await pool.query(
-    `SELECT bt.*,
-            (CASE bt.leg
-               WHEN 'R1' THEN (SELECT COUNT(*) FROM tickets tk WHERE tk.trip3_id = bt.id)
-               WHEN 'R2' THEN (SELECT COUNT(*) FROM tickets tk WHERE tk.trip4_id = bt.id)
-             END)::int AS onboard
+    `SELECT bt.*, (SELECT COUNT(*) FROM tickets tk WHERE tk.trip4_id = bt.id)::int AS onboard
      FROM bus_trips bt
-     WHERE bt.leg IN ('R1', 'R2')
+     WHERE bt.leg = 'R2'
      ORDER BY bt.created_at DESC`
   );
 
-  const s = statRows[0];
   res.json({
-    departedVenueTotal: s.departed_venue_total,
-    enRouteToCentral: s.en_route_to_central,
-    atCentralTotal: s.at_central_total,
-    enRouteToHub: s.en_route_to_hub,
-    arrivedAtHubTotal: s.arrived_at_hub_total,
-    avgWaitAtCentralMinutes: s.avg_wait_at_central_minutes !== null ? Math.round(s.avg_wait_at_central_minutes) : null,
-    waitingPerHub: waitingRows.map((r) => ({
-      hubId: r.hub_id, hubName: r.hub_name,
-      waitingCount: r.waiting_count, enRouteCount: r.en_route_count,
-    })),
-    arrivedPerHub: arrivedRows.map((r) => ({ hubId: r.hub_id, hubName: r.hub_name, count: r.count })),
+    total: hubRows.reduce((s, r) => s + r.count, 0),
+    perHub: hubRows.map((r) => ({ hubId: r.hub_id, hubName: r.hub_name, count: r.count, departedTotal: r.departed_total })),
     trips: tripRows.map((r) => ({
       tripId: r.id, leg: r.leg, licensePlate: r.license_plate,
       origin: r.origin, destination: r.destination, status: r.status,

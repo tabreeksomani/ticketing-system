@@ -32,11 +32,22 @@
   .status-arrived { background: #DCFCE7; color: #166534; }
   .pill { background: #FFFFFF; color: #57534E; border: 1px solid #E2D9C4; border-radius: 10px; padding: 14px; margin-bottom: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; min-height: 52px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
   .pill.selected { border-color: #8C734C; background: #F3ECDD; }
+  /* Riders are already on board and waiting - the trip needs a volunteer to
+     go back in and tap Complete & Depart once scanning's done. Deliberately
+     louder than the small status badge alone, since that's easy to miss
+     while scanning quickly. */
+  .pill.boarding-alert { border: 2px solid #D97706; background: #FFFBEB; box-shadow: 0 0 0 3px rgba(217,119,6,0.15); }
   .pill .name { font-weight: 700; color: #241C10; font-size: 15px; }
   .pill .meta { font-size: 12px; color: #756c5a; margin-top: 2px; }
   .empty { text-align: center; color: #756c5a; padding: 26px 16px; font-size: 13px; }
-  .toast { position: fixed; top: calc(66px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 40; max-width: 92%; text-align: center; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-  .toast-error { background: #FEE2E2; border: 1px solid #FCA5A5; color: #B91C1C; }
+  /* Bottom-anchored, not top - an actively-playing camera stream is known to
+     break position:fixed for other elements in some mobile browsers, making
+     a top-anchored toast render relative to the scrolled document instead
+     of the real viewport (only visible after scrolling up). Bottom anchoring
+     is far more reliable during live video, and keeps it near eye level
+     while scanning either way. */
+  .toast { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); padding: 16px 22px; border-radius: 12px; font-size: 17px; z-index: 40; max-width: 92%; text-align: center; font-weight: 700; box-shadow: 0 2px 10px rgba(0,0,0,0.15); }
+  .toast-error { background: #FEE2E2; border: 2px solid #EF4444; color: #B91C1C; }
   .toast-success { background: #DCFCE7; border: 1px solid #86EFAC; color: #166534; }
   .toast-warn { background: #FEF3C7; border: 1px solid #FDE68A; color: #92400E; }
   .login-card { max-width: 360px; width: 100%; margin: 0 auto; }
@@ -50,6 +61,7 @@
   .scanner-status { padding: 10px 14px; font-size: 12px; color: #756c5a; text-align: center; background: #FFFFFF; }
   .scanner-status.warn { color: #B91C1C; }
   .manual-toggle { background: none; border: none; color: #8C734C; font-size: 13px; text-align: center; width: 100%; padding: 10px 0; cursor: pointer; text-decoration: underline; }
+  .danger-link { background: none; border: none; color: #B91C1C; font-size: 13px; text-align: center; width: 100%; padding: 6px 0; cursor: pointer; text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -127,16 +139,45 @@
   // juggles multiple routes (to Venue, to any hub, from any hub, from
   // Venue) - Hub/Venue's direction is already implied by which of
   // Departures/Arrivals you're looking at, so they leave it off.
+  // Hub's own destination is ambiguous now that O1 can go to either Central
+  // or straight to the venue (VCC) - kept as its own label rather than
+  // routed through prettyLocation/showRoute, since Hub calls it "VCC"
+  // specifically, not "Venue" (which is what Central/Venue's own screens
+  // call the same underlying destination value).
+  function hubDestinationLabel(destination) {
+    return destination === 'venue' ? 'VCC' : 'Central';
+  }
+
+  // Departure lists (Hub's own, Central's Send to Venue/Hub) show full
+  // history, not just what's active - but active trips (still boarding,
+  // need a depart tap) are what a volunteer actually needs to see first.
+  // Stable sort keeps each group in its original (newest-first) order.
+  function sortTripsForDepartureList(trips) {
+    const rank = (t) => (t.status === 'scheduled' || t.status === 'boarding' ? 0 : 1);
+    return [...trips].sort((a, b) => rank(a) - rank(b));
+  }
+
   function tripCardHtml(t, opts) {
     opts = opts || {};
     const clickable = !!opts.clickable;
-    const showMarkArrived = !!t.departedAt && !t.arrivedAt;
+    // Only ever shown on actual arrival lists (opts.isArrivalList) - this
+    // card is reused on departure lists too (Hub's own, Central's Send to
+    // Venue/Hub), which are the origin side and are no longer allowed to
+    // mark a trip arrived at all.
+    const showMarkArrived = !!opts.isArrivalList && !!t.departedAt && !t.arrivedAt;
+    // Riders are already boarding this one and it hasn't departed yet - flag
+    // it loudly on origin-side lists so it doesn't get left sitting there.
+    // Arrival lists never show a 'boarding' trip (they only ever list
+    // departed-not-yet-arrived), so this is a no-op there.
+    const boardingAlert = t.status === 'boarding';
     const timestamps = tripTimestampsHtml(t);
     const title = opts.showRoute
-      ? `${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))} <span style="color:#756c5a;font-weight:600;">|</span> ${escapeHtml(t.licensePlate)}`
-      : escapeHtml(t.licensePlate);
+      ? `${escapeHtml(t.licensePlate)} <span style="color:#756c5a;font-weight:600;">|</span> ${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))}`
+      : opts.destinationLabel
+        ? `${escapeHtml(t.licensePlate)} <span style="color:#756c5a;font-weight:600;">·</span> <span style="font-size:17px;font-weight:800;color:#8C734C;">${escapeHtml(opts.destinationLabel)}</span>`
+        : escapeHtml(t.licensePlate);
     return `
-      <div class="pill" style="cursor:${clickable ? 'pointer' : 'default'};${clickable ? '' : 'opacity:0.85;'}" ${clickable ? `data-trip="${t.id}"` : ''}>
+      <div class="pill${boardingAlert ? ' boarding-alert' : ''}" style="cursor:${clickable ? 'pointer' : 'default'};${clickable ? '' : 'opacity:0.85;'}" ${clickable ? `data-trip="${t.id}"` : ''}>
         <div style="display:flex; gap:12px; align-items:flex-start; width:100%;">
           ${onboardRing(t.onboard, 44)}
           <div style="flex:1; min-width:0;">
@@ -145,6 +186,7 @@
               <div class="bus-status status-${t.status}">${STATUS_LABELS[t.status] || t.status}</div>
             </div>
             ${timestamps ? `<div class="meta" style="margin-top:4px;${opts.showRoute ? 'font-size:13px;' : ''}">${timestamps}</div>` : ''}
+            ${boardingAlert && clickable ? `<div class="meta" style="margin-top:4px;color:#92400E;font-weight:700;">Tap to finish scanning &amp; mark departed</div>` : ''}
             ${showMarkArrived ? `<button class="btn btn-primary" data-mark-arrived="${t.id}" style="margin-top:8px;padding:10px;font-size:13px;min-height:38px;">Mark arrived</button>` : ''}
           </div>
         </div>
@@ -157,7 +199,10 @@
     t.className = 'toast ' + (kind === 'success' ? 'toast-success' : kind === 'warn' ? 'toast-warn' : 'toast-error');
     t.textContent = msg;
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2400);
+    // Errors get more time on screen than success/warn - now that they're
+    // bigger and easier to notice, they also need to be readable, not just
+    // flash past a volunteer mid-scan.
+    setTimeout(() => t.remove(), kind === 'success' ? 2400 : 3600);
   }
 
   function showConfirmModal(message, confirmLabel, onConfirm) {
@@ -176,6 +221,63 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     overlay.querySelector('#confirmCancelBtn').onclick = () => overlay.remove();
     overlay.querySelector('#confirmOkBtn').onclick = () => { overlay.remove(); onConfirm(); };
+  }
+
+  function showEditPlateModal(currentPlate, onConfirm) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:320px;width:100%;margin:0;">
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Edit license plate</div>
+        <input id="editPlateInput" autocomplete="off" value="${escapeHtml(currentPlate)}" style="margin-bottom:16px;" />
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline" id="editPlateCancelBtn" style="flex:1;">Cancel</button>
+          <button class="btn btn-primary" id="editPlateOkBtn" style="flex:1;">Save</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    wireLicensePlateInput('editPlateInput');
+    const input = overlay.querySelector('#editPlateInput');
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    overlay.querySelector('#editPlateCancelBtn').onclick = () => overlay.remove();
+    overlay.querySelector('#editPlateOkBtn').onclick = () => {
+      const plate = input.value.trim();
+      if (!plate) return;
+      overlay.remove();
+      onConfirm(plate);
+    };
+  }
+
+  // Used for the walk-up-standby flow on legs with no hub implied by the
+  // trip itself (O2) - the volunteer has to say which hub the rider actually
+  // belongs to, since that's what lets them board the right R2 bus home
+  // later.
+  function showHubPickerModal(hubs, onConfirm) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:320px;width:100%;margin:0;">
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">This ticket isn't in the system — issue a walk-up standby. Which hub is this rider from?</div>
+        <select id="hubPickerSelect">
+          ${hubs.map(h => `<option value="${h.hubId}">${escapeHtml(h.hubName)}</option>`).join('')}
+        </select>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <button class="btn btn-outline" id="hubPickerCancelBtn" style="flex:1;">Cancel</button>
+          <button class="btn btn-primary" id="hubPickerOkBtn" style="flex:1;">Issue Standby</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#hubPickerCancelBtn').onclick = () => overlay.remove();
+    overlay.querySelector('#hubPickerOkBtn').onclick = () => {
+      const hubId = overlay.querySelector('#hubPickerSelect').value;
+      overlay.remove();
+      onConfirm(hubId);
+    };
   }
 
   // Every call site passes its own role's token explicitly - there are
@@ -411,7 +513,7 @@
   function roleShellHtml(opts) {
     return `
       ${opts.extraBar || ''}
-      <div class="tabs">${opts.subTabsHtml}</div>
+      ${opts.subTabsHtml ? `<div class="tabs">${opts.subTabsHtml}</div>` : ''}
       <div id="${opts.bodyId}">${opts.bodyHtml}</div>
     `;
   }
@@ -420,11 +522,9 @@
   let hubToken = localStorage.getItem('volunteer_token');
   let hubUser = JSON.parse(localStorage.getItem('volunteer_user') || 'null');
   let activeHubId = null;
-  let hubSubTab = 'depart'; // 'depart' (O1: Departures) | 'arrive' (R2: Arrivals)
   let hubTrips = [];
   let hubActiveTripId = null;
   let hubShowNewTripForm = false;
-  let hubArrivalTrips = [];
   let hubLastScannedCode = null;
 
   function initActiveHub() {
@@ -447,7 +547,7 @@
   async function renderHubArea() {
     if (!hubToken || !hubUser) { renderHubLogin(); return; }
     if (activeHubId === null) initActiveHub();
-    renderHubCurrentTab();
+    renderHubDepartTab();
   }
 
   async function renderHubLogin() {
@@ -478,6 +578,9 @@
     document.getElementById('hubLoginPass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('hubLoginBtn').click(); });
   }
 
+  // Hub only handles departures (O1) - R2 arrivals back at the hub are no
+  // longer tracked with a scan/tap step (mirroring what happened to R1),
+  // so there's no sub-tab bar here, same reasoning as Venue.
   function renderHubShell(bodyHtml) {
     const showHubBar = hubUser.hubs && hubUser.hubs.length > 1;
     document.getElementById('roleArea').innerHTML = roleShellHtml({
@@ -489,10 +592,6 @@
           </select>
         </div>
       ` : '',
-      subTabsHtml: `
-        <div class="tab ${hubSubTab === 'depart' ? 'active' : ''}" data-hub-subtab="depart">Departures</div>
-        <div class="tab ${hubSubTab === 'arrive' ? 'active' : ''}" data-hub-subtab="arrive">Arrivals</div>
-      `,
       bodyId: 'hubBody', bodyHtml,
     });
     const switcher = document.getElementById('hubSwitcher');
@@ -500,21 +599,9 @@
       switcher.onchange = () => {
         stopActiveScanner();
         setActiveHub(switcher.value);
-        renderHubCurrentTab();
+        renderHubDepartTab();
       };
     }
-    document.querySelectorAll('[data-hub-subtab]').forEach(el => {
-      el.onclick = () => {
-        stopActiveScanner();
-        hubSubTab = el.dataset.hubSubtab;
-        renderHubCurrentTab();
-      };
-    });
-  }
-
-  function renderHubCurrentTab() {
-    if (hubSubTab === 'arrive') renderHubArrivalsTab();
-    else renderHubDepartTab();
   }
 
   async function renderHubDepartTab() {
@@ -531,6 +618,11 @@
       <button class="btn btn-primary" id="hubNewTripBtn" style="margin-bottom:10px;">${icon('bus', 15)} New Trip</button>
       ${hubShowNewTripForm ? `
         <div class="card" style="margin-bottom:10px;">
+          <label>Destination</label>
+          <select id="hubNewTripDestination">
+            <option value="central">Central</option>
+            <option value="venue">VCC</option>
+          </select>
           <label>License Plate</label>
           <input id="hubNewTripPlate" autocomplete="off" placeholder="e.g. BC1234" />
           <button class="btn btn-primary" id="hubCreateTripBtn">Create Trip</button>
@@ -539,7 +631,7 @@
       ${hubTrips.length ? `
         <div class="card">
           <h2 class="section" style="font-size:11px;text-transform:uppercase;color:#756c5a;margin:0 0 10px;">Trips</h2>
-          ${hubTrips.map(t => tripCardHtml(t, { clickable: t.status !== 'arrived' })).join('')}
+          ${sortTripsForDepartureList(hubTrips).map(t => tripCardHtml(t, { clickable: t.status === 'scheduled' || t.status === 'boarding', destinationLabel: hubDestinationLabel(t.destination) })).join('')}
         </div>
       ` : '<div class="card"><div class="empty">No trips yet for this hub.</div></div>'}
     `);
@@ -549,7 +641,6 @@
         renderHubBoardingScreen();
       };
     });
-    wireMarkArrivedButtons(hubToken, hubTrips, () => renderHubDepartTab());
     wireLicensePlateInput('hubNewTripPlate');
     document.getElementById('hubNewTripBtn').onclick = () => {
       hubShowNewTripForm = !hubShowNewTripForm;
@@ -559,9 +650,10 @@
     const createBtn = document.getElementById('hubCreateTripBtn');
     if (createBtn) createBtn.onclick = async () => {
       const licensePlate = document.getElementById('hubNewTripPlate').value.trim();
+      const destination = document.getElementById('hubNewTripDestination').value;
       if (!licensePlate) return;
       try {
-        const trip = await api(hubToken, '/trips', { method: 'POST', body: JSON.stringify({ leg: 'O1', licensePlate, origin: activeHubId }) });
+        const trip = await api(hubToken, '/trips', { method: 'POST', body: JSON.stringify({ leg: 'O1', licensePlate, origin: activeHubId, destination }) });
         feedback(true);
         hubShowNewTripForm = false;
         hubTrips = [...hubTrips, trip];
@@ -574,36 +666,62 @@
   function renderHubBoardingScreen() {
     const trip = hubTrips.find(t => t.id === hubActiveTripId);
     const canBoard = trip.status === 'scheduled' || trip.status === 'boarding';
-    const canArrive = trip.status === 'departed';
     const createdLabel = trip.createdAt ? 'Created ' + formatShortTime(trip.createdAt) : '';
+    const destLabel = hubDestinationLabel(trip.destination);
     hubLastScannedCode = null;
     renderHubShell(`
       <button class="btn btn-outline" id="hubBackBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} All trips</button>
       <div class="card" style="text-align:center;">
         <div id="hubOnboardRingWrap" style="display:flex;justify-content:center;">${onboardRing(trip.onboard, 160)}</div>
-        <div class="cap-label" style="margin-top:8px;">${escapeHtml(trip.licensePlate)} · <span class="bus-status status-${trip.status}">${STATUS_LABELS[trip.status] || trip.status}</span></div>
+        <div style="font-size:26px;font-weight:800;color:#241C10;letter-spacing:0.5px;margin-top:8px;">${escapeHtml(trip.licensePlate)}</div>
+        <div class="cap-label" style="margin-top:2px;"><span style="font-size:17px;font-weight:800;color:#8C734C;">${escapeHtml(destLabel)}</span> · <span class="bus-status status-${trip.status}">${STATUS_LABELS[trip.status] || trip.status}</span></div>
         ${createdLabel ? `<div class="meta" style="font-size:11px;">${createdLabel}</div>` : ''}
         <div class="meta" id="hubScanLog" style="font-size:11px;min-height:15px;"></div>
       </div>
-      ${canBoard ? scannerCardHtml('hubBoard') : `<div class="card"><div class="empty">This trip has departed for Central.</div></div>`}
+      ${canBoard ? scannerCardHtml('hubBoard') : `<div class="card"><div class="empty">This trip has departed for ${escapeHtml(destLabel)}.</div></div>`}
       ${canBoard ? `
         <button class="manual-toggle" id="hubManualToggle">Enter code manually instead</button>
         <div id="hubManualWrap" style="display:none;">
           <div class="card"><input id="hubBoardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
         </div>
       ` : ''}
-      ${canArrive ? `<button class="btn btn-primary" id="hubArriveBtn">Mark Arrived at Central</button>` : ''}
       ${canBoard ? `
         <div style="position:sticky;bottom:0;background:#FFFFFF;padding:10px 0 max(10px, env(safe-area-inset-bottom));border-top:1px solid #E8E1D3;margin-top:10px;">
           <button class="btn btn-danger" id="hubDepartBtn" ${trip.onboard < 1 ? 'disabled' : ''} style="${trip.onboard < 1 ? 'opacity:0.4;' : ''}">Complete &amp; Depart</button>
         </div>
       ` : ''}
+      ${canBoard ? `<button class="manual-toggle" id="hubEditPlateBtn">Wrong plate? Edit it</button>` : ''}
+      ${trip.status === 'scheduled' ? `<button class="danger-link" id="hubDeleteTripBtn">Delete this trip (created by mistake)</button>` : ''}
     `);
 
     document.getElementById('hubBackBtn').onclick = () => {
       stopActiveScanner();
       hubActiveTripId = null;
       renderHubDepartTab();
+    };
+
+    const editPlateBtn = document.getElementById('hubEditPlateBtn');
+    if (editPlateBtn) editPlateBtn.onclick = () => {
+      showEditPlateModal(trip.licensePlate, async (licensePlate) => {
+        try {
+          const updated = await api(hubToken, `/trips/${hubActiveTripId}/license-plate`, { method: 'POST', body: JSON.stringify({ licensePlate }) });
+          hubTrips = hubTrips.map(t => (t.id === hubActiveTripId ? updated : t));
+          showToast('License plate updated', 'success');
+          renderHubBoardingScreen();
+        } catch (e) { showToast(e.message); }
+      });
+    };
+
+    const deleteBtn = document.getElementById('hubDeleteTripBtn');
+    if (deleteBtn) deleteBtn.onclick = () => {
+      showConfirmModal(`Delete trip ${trip.licensePlate}? This can't be undone.`, 'Delete Trip', async () => {
+        try {
+          await api(hubToken, `/trips/${hubActiveTripId}`, { method: 'DELETE' });
+          showToast('Trip deleted', 'success');
+          hubActiveTripId = null;
+          renderHubDepartTab();
+        } catch (e) { showToast(e.message); }
+      });
     };
 
     if (canBoard) {
@@ -638,16 +756,50 @@
       });
     };
 
-    const arriveBtn = document.getElementById('hubArriveBtn');
-    if (arriveBtn) arriveBtn.onclick = async () => {
+  }
+
+  // Formats a timeslot's raw departure_time as a plain clock time (e.g.
+  // "6:00pm") - the digits already represent Pacific wall-clock time, same
+  // convention as everywhere else in this app, so no timezone math needed,
+  // just extraction.
+  function formatSlotClock(raw) {
+    const m = String(raw).match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/);
+    if (!m) return raw;
+    let h = parseInt(m[1], 10);
+    const mer = h < 12 ? 'am' : 'pm';
+    h = h % 12 === 0 ? 12 : h % 12;
+    return `${h}:${m[2]}${mer}`;
+  }
+
+  function updateHubScanLog() {
+    const scanLog = document.getElementById('hubScanLog');
+    if (!scanLog) return;
+    if (!hubLastScannedCode) { scanLog.innerHTML = ''; return; }
+    scanLog.innerHTML = `Last scanned: ${escapeHtml(formatTicketCode(hubLastScannedCode))} <button data-undo-hub-scan style="background:none;border:none;color:#8C734C;font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Undo</button>`;
+    const undoBtn = document.querySelector('[data-undo-hub-scan]');
+    if (undoBtn) undoBtn.onclick = undoLastHubScan;
+  }
+
+  async function undoLastHubScan() {
+    if (!hubLastScannedCode) return;
+    const code = hubLastScannedCode;
+    showConfirmModal(`Remove ${formatTicketCode(code)} from this trip?`, 'Undo Scan', async () => {
       try {
-        await api(hubToken, `/trips/${hubActiveTripId}/arrive`, { method: 'POST' });
+        const updated = await api(hubToken, `/trips/${hubActiveTripId}/unboard`, { method: 'POST', body: JSON.stringify({ code }) });
+        hubTrips = hubTrips.map(t => (t.id === hubActiveTripId ? updated : t));
         feedback(true);
-        showToast('Trip marked arrived at Central', 'success');
-        hubActiveTripId = null;
-        renderHubDepartTab();
+        hubLastScannedCode = null;
+        const ringWrap = document.getElementById('hubOnboardRingWrap');
+        if (ringWrap) ringWrap.innerHTML = onboardRing(updated.onboard, 160);
+        updateHubScanLog();
+        const departBtn = document.getElementById('hubDepartBtn');
+        if (departBtn) {
+          departBtn.disabled = updated.onboard < 1;
+          departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
+        }
+        showToast('Scan undone', 'success');
       } catch (e) { showToast(e.message); }
-    };
+    });
   }
 
   async function handleHubBoard(code, fromCamera) {
@@ -665,14 +817,24 @@
       hubLastScannedCode = code;
       const ringWrap = document.getElementById('hubOnboardRingWrap');
       if (ringWrap) ringWrap.innerHTML = onboardRing(updated.onboard, 160);
-      const scanLog = document.getElementById('hubScanLog');
-      if (scanLog) scanLog.textContent = 'Last scanned: ' + formatTicketCode(code);
+      updateHubScanLog();
       const departBtn = document.getElementById('hubDepartBtn');
       if (departBtn) {
         departBtn.disabled = updated.onboard < 1;
         departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
       }
-      if (updated.issuedStandby) {
+      // First scan on this trip flips it from 'scheduled' to 'boarding' -
+      // delete is no longer allowed once anyone's on board (backend gate),
+      // so pull the button rather than leave a now-broken action visible.
+      if (updated.status !== 'scheduled') {
+        const deleteBtn = document.getElementById('hubDeleteTripBtn');
+        if (deleteBtn) deleteBtn.remove();
+      }
+      if (updated.timeslotWarning) {
+        const dir = updated.timeslotWarning.minutesLate > 0 ? 'late' : 'early';
+        const mins = Math.abs(updated.timeslotWarning.minutesLate);
+        showToast(`${formatTicketCode(code)} checked in — their ${formatSlotClock(updated.timeslotWarning.departureTime)} timeslot is ${mins} min ${dir}`, 'warn');
+      } else if (updated.issuedStandby) {
         showToast(`${formatTicketCode(code)} — new standby ticket issued & checked in`, 'success');
       } else {
         showToast(`${formatTicketCode(code)} checked in`, 'success');
@@ -681,21 +843,6 @@
       feedback(false);
       showToast(e.message);
     }
-  }
-
-  async function renderHubArrivalsTab() {
-    renderHubShell(`<div class="card"><div class="empty">Loading arrivals…</div></div>`);
-    try {
-      hubArrivalTrips = await api(hubToken, '/trips?leg=R2&side=arrival&destination=' + encodeURIComponent(activeHubId));
-    } catch (e) { showToast(e.message); return; }
-    renderHubArrivalsList();
-  }
-
-  function renderHubArrivalsList() {
-    renderHubShell(`
-      ${hubArrivalTrips.length ? hubArrivalTrips.map(t => tripCardHtml(t, { clickable: false })).join('') : '<div class="card"><div class="empty">No buses en route from Central right now.</div></div>'}
-    `);
-    wireMarkArrivedButtons(hubToken, hubArrivalTrips, () => renderHubArrivalsTab());
   }
 
   // ========================================================== CENTRAL ====
@@ -782,7 +929,7 @@
 
   function renderCentralArrivalsList() {
     renderCentralShell(`
-      ${centralArrivalTrips.length ? centralArrivalTrips.map(t => tripCardHtml(t, { clickable: false, showRoute: true })).join('') : '<div class="card"><div class="empty">No buses en route right now.</div></div>'}
+      ${centralArrivalTrips.length ? centralArrivalTrips.map(t => tripCardHtml(t, { clickable: false, showRoute: true, isArrivalList: true })).join('') : '<div class="card"><div class="empty">No buses en route right now.</div></div>'}
     `);
     wireMarkArrivedButtons(centralToken, centralArrivalTrips, () => renderCentralArriveTab());
   }
@@ -808,7 +955,7 @@
       ` : ''}
       ${centralTrips.length ? `
         <div class="card">
-          ${centralTrips.map(t => tripCardHtml(t, { clickable: t.status !== 'arrived', showRoute: true })).join('')}
+          ${sortTripsForDepartureList(centralTrips).map(t => tripCardHtml(t, { clickable: t.status === 'scheduled' || t.status === 'boarding', showRoute: true })).join('')}
         </div>
       ` : '<div class="card"><div class="empty">No trips yet.</div></div>'}
     `);
@@ -818,7 +965,6 @@
         renderCentralBoardingScreen();
       };
     });
-    wireMarkArrivedButtons(centralToken, centralTrips, () => (leg === 'R2' ? renderCentralToHubTab() : renderCentralToVenueTab()));
     wireLicensePlateInput('centralNewTripPlate');
     document.getElementById('centralNewTripBtn').onclick = () => {
       centralShowNewTripForm = !centralShowNewTripForm;
@@ -843,7 +989,6 @@
   function renderCentralBoardingScreen() {
     const trip = centralTrips.find(t => t.id === centralActiveTripId);
     const canBoard = trip.status === 'scheduled' || trip.status === 'boarding';
-    const canArrive = trip.status === 'departed';
     const destLabel = `to ${escapeHtml(trip.destination)}`;
     const createdLabel = trip.createdAt ? 'Created ' + formatShortTime(trip.createdAt) : '';
     centralLastScannedCode = null;
@@ -851,7 +996,8 @@
       <button class="btn btn-outline" id="centralBackBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} All trips</button>
       <div class="card" style="text-align:center;">
         <div id="centralOnboardRingWrap" style="display:flex;justify-content:center;">${onboardRing(trip.onboard, 160)}</div>
-        <div class="cap-label" style="margin-top:8px;">${escapeHtml(trip.licensePlate)} ${destLabel} · <span class="bus-status status-${trip.status}">${STATUS_LABELS[trip.status] || trip.status}</span></div>
+        <div style="font-size:26px;font-weight:800;color:#241C10;letter-spacing:0.5px;margin-top:8px;">${escapeHtml(trip.licensePlate)}</div>
+        <div class="cap-label" style="margin-top:2px;">${destLabel} · <span class="bus-status status-${trip.status}">${STATUS_LABELS[trip.status] || trip.status}</span></div>
         ${createdLabel ? `<div class="meta" style="font-size:11px;">${createdLabel}</div>` : ''}
         <div class="meta" id="centralScanLog" style="font-size:11px;min-height:15px;"></div>
       </div>
@@ -862,18 +1008,44 @@
           <div class="card"><input id="centralBoardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
         </div>
       ` : ''}
-      ${canArrive ? `<button class="btn btn-primary" id="centralArriveBtn">Mark Arrived ${destLabel}</button>` : ''}
       ${canBoard ? `
         <div style="position:sticky;bottom:0;background:#FFFFFF;padding:10px 0 max(10px, env(safe-area-inset-bottom));border-top:1px solid #E8E1D3;margin-top:10px;">
           <button class="btn btn-danger" id="centralDepartBtn" ${trip.onboard < 1 ? 'disabled' : ''} style="${trip.onboard < 1 ? 'opacity:0.4;' : ''}">Complete &amp; Depart</button>
         </div>
       ` : ''}
+      ${canBoard ? `<button class="manual-toggle" id="centralEditPlateBtn">Wrong plate? Edit it</button>` : ''}
+      ${trip.status === 'scheduled' ? `<button class="danger-link" id="centralDeleteTripBtn">Delete this trip</button>` : ''}
     `);
 
     document.getElementById('centralBackBtn').onclick = () => {
       stopActiveScanner();
       centralActiveTripId = null;
       if (trip.leg === 'R2') renderCentralToHubTab(); else renderCentralToVenueTab();
+    };
+
+    const editPlateBtn = document.getElementById('centralEditPlateBtn');
+    if (editPlateBtn) editPlateBtn.onclick = () => {
+      showEditPlateModal(trip.licensePlate, async (licensePlate) => {
+        try {
+          const updated = await api(centralToken, `/trips/${centralActiveTripId}/license-plate`, { method: 'POST', body: JSON.stringify({ licensePlate }) });
+          centralTrips = centralTrips.map(t => (t.id === centralActiveTripId ? updated : t));
+          showToast('License plate updated', 'success');
+          renderCentralBoardingScreen();
+        } catch (e) { showToast(e.message); }
+      });
+    };
+
+    const deleteBtn = document.getElementById('centralDeleteTripBtn');
+    if (deleteBtn) deleteBtn.onclick = () => {
+      const leg = trip.leg;
+      showConfirmModal(`Delete trip ${trip.licensePlate}? This can't be undone.`, 'Delete Trip', async () => {
+        try {
+          await api(centralToken, `/trips/${centralActiveTripId}`, { method: 'DELETE' });
+          showToast('Trip deleted', 'success');
+          centralActiveTripId = null;
+          if (leg === 'R2') renderCentralToHubTab(); else renderCentralToVenueTab();
+        } catch (e) { showToast(e.message); }
+      });
     };
 
     if (canBoard) {
@@ -907,20 +1079,40 @@
       });
     };
 
-    const arriveBtn = document.getElementById('centralArriveBtn');
-    if (arriveBtn) arriveBtn.onclick = async () => {
-      const leg = trip.leg;
-      try {
-        await api(centralToken, `/trips/${centralActiveTripId}/arrive`, { method: 'POST' });
-        feedback(true);
-        showToast('Trip marked arrived', 'success');
-        centralActiveTripId = null;
-        if (leg === 'R2') renderCentralToHubTab(); else renderCentralToVenueTab();
-      } catch (e) { showToast(e.message); }
-    };
   }
 
-  async function handleCentralBoard(code, fromCamera) {
+  function updateCentralScanLog() {
+    const scanLog = document.getElementById('centralScanLog');
+    if (!scanLog) return;
+    if (!centralLastScannedCode) { scanLog.innerHTML = ''; return; }
+    scanLog.innerHTML = `Last scanned: ${escapeHtml(formatTicketCode(centralLastScannedCode))} <button data-undo-central-scan style="background:none;border:none;color:#8C734C;font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Undo</button>`;
+    const undoBtn = document.querySelector('[data-undo-central-scan]');
+    if (undoBtn) undoBtn.onclick = undoLastCentralScan;
+  }
+
+  async function undoLastCentralScan() {
+    if (!centralLastScannedCode) return;
+    const code = centralLastScannedCode;
+    showConfirmModal(`Remove ${formatTicketCode(code)} from this trip?`, 'Undo Scan', async () => {
+      try {
+        const updated = await api(centralToken, `/trips/${centralActiveTripId}/unboard`, { method: 'POST', body: JSON.stringify({ code }) });
+        centralTrips = centralTrips.map(t => (t.id === centralActiveTripId ? updated : t));
+        feedback(true);
+        centralLastScannedCode = null;
+        const ringWrap = document.getElementById('centralOnboardRingWrap');
+        if (ringWrap) ringWrap.innerHTML = onboardRing(updated.onboard, 160);
+        updateCentralScanLog();
+        const departBtn = document.getElementById('centralDepartBtn');
+        if (departBtn) {
+          departBtn.disabled = updated.onboard < 1;
+          departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
+        }
+        showToast('Scan undone', 'success');
+      } catch (e) { showToast(e.message); }
+    });
+  }
+
+  async function handleCentralBoard(code, fromCamera, standbyHubId, force) {
     if (!code) return;
     if (fromCamera && !isValidTicketCode(code)) {
       feedback(false);
@@ -929,26 +1121,48 @@
     }
     code = formatTicketCode(code);
     try {
-      const updated = await api(centralToken, `/trips/${centralActiveTripId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
+      const body = { code };
+      if (standbyHubId) body.standbyHubId = standbyHubId;
+      if (force) body.force = true;
+      const updated = await api(centralToken, `/trips/${centralActiveTripId}/board`, { method: 'POST', body: JSON.stringify(body) });
       centralTrips = centralTrips.map(t => (t.id === centralActiveTripId ? updated : t));
       feedback(true);
       centralLastScannedCode = code;
       const ringWrap = document.getElementById('centralOnboardRingWrap');
       if (ringWrap) ringWrap.innerHTML = onboardRing(updated.onboard, 160);
-      const scanLog = document.getElementById('centralScanLog');
-      if (scanLog) scanLog.textContent = 'Last scanned: ' + formatTicketCode(code);
+      updateCentralScanLog();
       const departBtn = document.getElementById('centralDepartBtn');
       if (departBtn) {
         departBtn.disabled = updated.onboard < 1;
         departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
       }
+      if (updated.status !== 'scheduled') {
+        const deleteBtn = document.getElementById('centralDeleteTripBtn');
+        if (deleteBtn) deleteBtn.remove();
+      }
       showToast(`${formatTicketCode(code)} checked in`, 'success');
     } catch (e) {
       feedback(false);
+      // O2 walk-up standby: this leg has no hub implied by the trip itself,
+      // so the server asks us to prompt for one instead of just failing.
+      if (e.message.startsWith('NEED_STANDBY_HUB')) {
+        try {
+          const hubs = await api(centralToken, '/trips/hub-headcounts');
+          showHubPickerModal(hubs, (hubId) => handleCentralBoard(code, false, hubId));
+        } catch (e2) { showToast(e2.message); }
+        return;
+      }
       // Wrong-bus mismatch (R2 only - a ticket's home hub doesn't match this
-      // trip's destination hub) is a distinct, recoverable warning rather
-      // than a hard error - yellow instead of red.
-      showToast(e.message, e.message.startsWith('Wrong bus') ? 'warn' : 'error');
+      // trip's destination hub) - not a hard block. The rider might still
+      // legitimately need to be on this bus (family splitting up, ticket's
+      // home hub is just wrong), so ask rather than just refusing outright.
+      if (e.message.startsWith('Wrong bus')) {
+        showConfirmModal(`${e.message} Board them on this bus anyway?`, 'Board Anyway', () => {
+          handleCentralBoard(code, false, standbyHubId, true);
+        });
+        return;
+      }
+      showToast(e.message, 'error');
     }
   }
 
@@ -970,11 +1184,11 @@
   }
 
   // Destination is a plain dropdown, not a decision-support pill list - which
-  // hub gets the next bus is called by dispatch (admin), not chosen by the
-  // Central volunteer, so the UI shouldn't read like it's asking them to pick
-  // based on the waiting counts. Counts are still shown in each option's
-  // label in case the volunteer needs to relay them, but a 10+ hub list is
-  // also just too long for tap-targets/pills at this size.
+  // hub gets the next bus is called by dispatch (admin, in person), not
+  // chosen by the Central volunteer here. No live "waiting" count anymore
+  // either - that depended on R1 boarding data that can't exist since Venue
+  // dropped its Departures tab, so showing one would just be a permanent,
+  // misleading zero.
   function renderCentralHubPickerList() {
     renderCentralShell(`
       <div class="card">
@@ -982,7 +1196,7 @@
         <select id="centralHubSelect">
           <option value="">Select hub…</option>
           ${centralHubHeadcounts.map(h => `
-            <option value="${h.hubId}">${escapeHtml(h.hubName)} — ${h.count} waiting</option>
+            <option value="${h.hubId}">${escapeHtml(h.hubName)}</option>
           `).join('')}
         </select>
         <label>License Plate</label>
@@ -992,7 +1206,7 @@
       ${centralTrips.length ? `
         <div class="card">
           <h2 style="font-size:11px;text-transform:uppercase;color:#756c5a;margin:0 0 10px;">Trips</h2>
-          ${centralTrips.map(t => tripCardHtml(t, { clickable: t.status !== 'arrived', showRoute: true })).join('')}
+          ${sortTripsForDepartureList(centralTrips).map(t => tripCardHtml(t, { clickable: t.status === 'scheduled' || t.status === 'boarding', showRoute: true })).join('')}
         </div>
       ` : ''}
     `);
@@ -1002,7 +1216,6 @@
         renderCentralBoardingScreen();
       };
     });
-    wireMarkArrivedButtons(centralToken, centralTrips, () => renderCentralToHubTab());
     wireLicensePlateInput('centralNewTripPlate');
 
     const hubSelect = document.getElementById('centralHubSelect');
@@ -1032,25 +1245,23 @@
   }
 
   // ============================================================ VENUE ====
+  // Venue only handles arrivals (O2, plus any O1 hub bus sent straight to
+  // VCC) - R1 (Venue->Central) trip creation is no longer part of this
+  // role, so there's no sub-tab bar here, unlike Hub/Central.
   let venueToken = localStorage.getItem('venue_token');
   let venueUser = JSON.parse(localStorage.getItem('venue_user') || 'null');
-  let venueSubTab = 'arrive'; // 'arrive' (O2) | 'depart' (R1)
   let venueArrivalTrips = [];
-  let venueTrips = [];
-  let venueActiveTripId = null;
-  let venueShowNewTripForm = false;
-  let venueLastScannedCode = null;
 
   function venueLogout() {
     stopActiveScanner();
     localStorage.removeItem('venue_token'); localStorage.removeItem('venue_user');
-    venueToken = null; venueUser = null; venueActiveTripId = null;
+    venueToken = null; venueUser = null;
     renderApp();
   }
 
   function renderVenueArea() {
     if (!venueToken || !venueUser) { renderVenueLogin(); return; }
-    renderVenueCurrentTab();
+    renderVenueArriveTab();
   }
 
   function renderVenueLogin() {
@@ -1077,199 +1288,29 @@
 
   function renderVenueShell(bodyHtml) {
     document.getElementById('roleArea').innerHTML = roleShellHtml({
-      subTabsHtml: `
-        <div class="tab ${venueSubTab === 'arrive' ? 'active' : ''}" data-venue-subtab="arrive">Arrivals</div>
-        <div class="tab ${venueSubTab === 'depart' ? 'active' : ''}" data-venue-subtab="depart">Departures</div>
-      `,
       bodyId: 'venueBody', bodyHtml,
     });
-    document.querySelectorAll('[data-venue-subtab]').forEach(el => {
-      el.onclick = () => {
-        stopActiveScanner();
-        venueSubTab = el.dataset.venueSubtab;
-        renderVenueCurrentTab();
-      };
-    });
-  }
-
-  function renderVenueCurrentTab() {
-    if (venueSubTab === 'arrive') renderVenueArriveTab();
-    else renderVenueDepartTab();
   }
 
   async function renderVenueArriveTab() {
     renderVenueShell(`<div class="card"><div class="empty">Loading arrivals…</div></div>`);
     try {
-      venueArrivalTrips = await api(venueToken, '/trips?leg=O2&side=arrival');
+      // O2 (Central->Venue) is the normal path; O1 shows up here too for any
+      // hub bus a volunteer sent straight to VCC instead of via Central.
+      const [o2, o1Direct] = await Promise.all([
+        api(venueToken, '/trips?leg=O2&side=arrival'),
+        api(venueToken, '/trips?leg=O1&side=arrival'),
+      ]);
+      venueArrivalTrips = [...o2, ...o1Direct];
     } catch (e) { showToast(e.message); return; }
     renderVenueArrivalsList();
   }
 
   function renderVenueArrivalsList() {
     renderVenueShell(`
-      ${venueArrivalTrips.length ? venueArrivalTrips.map(t => tripCardHtml(t, { clickable: false })).join('') : '<div class="card"><div class="empty">No buses en route from Central right now.</div></div>'}
+      ${venueArrivalTrips.length ? venueArrivalTrips.map(t => tripCardHtml(t, { clickable: false, showRoute: true, isArrivalList: true })).join('') : '<div class="card"><div class="empty">No buses en route right now.</div></div>'}
     `);
     wireMarkArrivedButtons(venueToken, venueArrivalTrips, () => renderVenueArriveTab());
-  }
-
-  async function renderVenueDepartTab() {
-    renderVenueShell(`<div class="card"><div class="empty">Loading trips…</div></div>`);
-    try {
-      venueTrips = await api(venueToken, '/trips?leg=R1&side=origin');
-    } catch (e) { showToast(e.message); return; }
-    venueActiveTripId = null;
-    renderVenueTripPicker();
-  }
-
-  function renderVenueTripPicker() {
-    renderVenueShell(`
-      <button class="btn btn-primary" id="venueNewTripBtn" style="margin-bottom:10px;">${icon('bus', 15)} New Trip</button>
-      ${venueShowNewTripForm ? `
-        <div class="card" style="margin-bottom:10px;">
-          <label>License Plate</label>
-          <input id="venueNewTripPlate" autocomplete="off" placeholder="e.g. BC1234" />
-          <button class="btn btn-primary" id="venueCreateTripBtn">Create Trip</button>
-        </div>
-      ` : ''}
-      ${venueTrips.length ? `
-        <div class="card">
-          ${venueTrips.map(t => tripCardHtml(t, { clickable: t.status !== 'arrived' })).join('')}
-        </div>
-      ` : '<div class="card"><div class="empty">No trips yet.</div></div>'}
-    `);
-    document.querySelectorAll('[data-trip]').forEach(el => {
-      el.onclick = () => {
-        venueActiveTripId = parseInt(el.dataset.trip, 10);
-        renderVenueBoardingScreen();
-      };
-    });
-    wireMarkArrivedButtons(venueToken, venueTrips, () => renderVenueDepartTab());
-    wireLicensePlateInput('venueNewTripPlate');
-    document.getElementById('venueNewTripBtn').onclick = () => {
-      venueShowNewTripForm = !venueShowNewTripForm;
-      renderVenueTripPicker();
-      if (venueShowNewTripForm) document.getElementById('venueNewTripPlate').focus();
-    };
-    const createBtn = document.getElementById('venueCreateTripBtn');
-    if (createBtn) createBtn.onclick = async () => {
-      const licensePlate = document.getElementById('venueNewTripPlate').value.trim();
-      if (!licensePlate) return;
-      try {
-        const trip = await api(venueToken, '/trips', { method: 'POST', body: JSON.stringify({ leg: 'R1', licensePlate }) });
-        feedback(true);
-        venueShowNewTripForm = false;
-        venueTrips = [...venueTrips, trip];
-        venueActiveTripId = trip.id;
-        renderVenueBoardingScreen();
-      } catch (e) { showToast(e.message); }
-    };
-  }
-
-  function renderVenueBoardingScreen() {
-    const trip = venueTrips.find(t => t.id === venueActiveTripId);
-    const canBoard = trip.status === 'scheduled' || trip.status === 'boarding';
-    const canArrive = trip.status === 'departed';
-    const createdLabel = trip.createdAt ? 'Created ' + formatShortTime(trip.createdAt) : '';
-    venueLastScannedCode = null;
-    renderVenueShell(`
-      <button class="btn btn-outline" id="venueBackBtn" style="margin-bottom:12px;">${icon('arrowLeft', 15)} All trips</button>
-      <div class="card" style="text-align:center;">
-        <div id="venueOnboardRingWrap" style="display:flex;justify-content:center;">${onboardRing(trip.onboard, 160)}</div>
-        <div class="cap-label" style="margin-top:8px;">${escapeHtml(trip.licensePlate)} · <span class="bus-status status-${trip.status}">${STATUS_LABELS[trip.status] || trip.status}</span></div>
-        ${createdLabel ? `<div class="meta" style="font-size:11px;">${createdLabel}</div>` : ''}
-        <div class="meta" id="venueScanLog" style="font-size:11px;min-height:15px;"></div>
-      </div>
-      ${canBoard ? scannerCardHtml('venueBoard') : `<div class="card"><div class="empty">This trip has departed for Central.</div></div>`}
-      ${canBoard ? `
-        <button class="manual-toggle" id="venueManualToggle">Enter code manually instead</button>
-        <div id="venueManualWrap" style="display:none;">
-          <div class="card"><input id="venueBoardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
-        </div>
-      ` : ''}
-      ${canArrive ? `<button class="btn btn-primary" id="venueArriveBtn">Mark Arrived at Central</button>` : ''}
-      ${canBoard ? `
-        <div style="position:sticky;bottom:0;background:#FFFFFF;padding:10px 0 max(10px, env(safe-area-inset-bottom));border-top:1px solid #E8E1D3;margin-top:10px;">
-          <button class="btn btn-danger" id="venueDepartBtn" ${trip.onboard < 1 ? 'disabled' : ''} style="${trip.onboard < 1 ? 'opacity:0.4;' : ''}">Complete &amp; Depart</button>
-        </div>
-      ` : ''}
-    `);
-
-    document.getElementById('venueBackBtn').onclick = () => {
-      stopActiveScanner();
-      venueActiveTripId = null;
-      renderVenueDepartTab();
-    };
-
-    if (canBoard) {
-      wireManualToggle('venueManualToggle', 'venueManualWrap', 'venueBoardInput');
-      document.getElementById('venueBoardInput').addEventListener('keydown', async (e) => {
-        if (e.key !== 'Enter') return;
-        const input = e.target;
-        await handleVenueBoard(input.value.trim());
-        input.value = '';
-        input.focus();
-      });
-      startCameraScanner(
-        document.getElementById('venueBoardVideo'),
-        document.getElementById('venueBoardStatus'),
-        document.getElementById('venueBoardFrame'),
-        (code) => handleVenueBoard(code, true)
-      );
-    }
-
-    const departBtn = document.getElementById('venueDepartBtn');
-    if (departBtn) departBtn.onclick = () => {
-      if (departBtn.disabled) return;
-      showConfirmModal('Mark this trip as departed? No more check-ins will be allowed after this.', 'Mark Departed', async () => {
-        try {
-          stopActiveScanner();
-          const updated = await api(venueToken, `/trips/${venueActiveTripId}/depart`, { method: 'POST' });
-          venueTrips = venueTrips.map(t => (t.id === venueActiveTripId ? updated : t));
-          feedback(true);
-          renderVenueBoardingScreen();
-        } catch (e) { showToast(e.message); }
-      });
-    };
-
-    const arriveBtn = document.getElementById('venueArriveBtn');
-    if (arriveBtn) arriveBtn.onclick = async () => {
-      try {
-        await api(venueToken, `/trips/${venueActiveTripId}/arrive`, { method: 'POST' });
-        feedback(true);
-        showToast('Trip marked arrived at Central', 'success');
-        venueActiveTripId = null;
-        renderVenueDepartTab();
-      } catch (e) { showToast(e.message); }
-    };
-  }
-
-  async function handleVenueBoard(code, fromCamera) {
-    if (!code) return;
-    if (fromCamera && !isValidTicketCode(code)) {
-      feedback(false);
-      showToast('Not a valid ticket code');
-      return;
-    }
-    code = formatTicketCode(code);
-    try {
-      const updated = await api(venueToken, `/trips/${venueActiveTripId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
-      venueTrips = venueTrips.map(t => (t.id === venueActiveTripId ? updated : t));
-      feedback(true);
-      venueLastScannedCode = code;
-      const ringWrap = document.getElementById('venueOnboardRingWrap');
-      if (ringWrap) ringWrap.innerHTML = onboardRing(updated.onboard, 160);
-      const scanLog = document.getElementById('venueScanLog');
-      if (scanLog) scanLog.textContent = 'Last scanned: ' + formatTicketCode(code);
-      const departBtn = document.getElementById('venueDepartBtn');
-      if (departBtn) {
-        departBtn.disabled = updated.onboard < 1;
-        departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
-      }
-      showToast(`${formatTicketCode(code)} checked in`, 'success');
-    } catch (e) {
-      feedback(false);
-      showToast(e.message);
-    }
   }
 
   renderApp();
