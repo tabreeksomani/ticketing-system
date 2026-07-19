@@ -36,6 +36,7 @@ function lotRow(row) {
     distanceValue: row.distance_value,
     distanceUnit: row.distance_unit,
     rate: row.rate,
+    code: row.code,
     updatedAt: row.updated_at,
     createdAt: row.created_at,
   };
@@ -103,11 +104,12 @@ router.post('/parking/lots', asyncHandler(async (req, res) => {
   const distanceValue = cleanNum(req.body.distanceValue);
   const distanceUnit = req.body.distanceUnit === 'm' ? 'm' : 'min walk';
   const rate = String(req.body.rate || '').trim() || null;
+  const code = String(req.body.code || '').trim() || null;
 
   const { rows } = await pool.query(
-    `INSERT INTO parking_lots (name, total_stalls, available_stalls, status, distance_value, distance_unit, rate, updated_at)
-     VALUES ($1, $2, NULL, 'available', $3, $4, $5, now()) RETURNING *`,
-    [name, totalStalls, distanceValue, distanceUnit, rate]
+    `INSERT INTO parking_lots (name, total_stalls, available_stalls, status, distance_value, distance_unit, rate, code, updated_at)
+     VALUES ($1, $2, NULL, 'available', $3, $4, $5, $6, now()) RETURNING *`,
+    [name, totalStalls, distanceValue, distanceUnit, rate, code]
   );
   res.status(201).json(lotRow(rows[0]));
 }));
@@ -125,11 +127,12 @@ router.put('/parking/lots/:id', asyncHandler(async (req, res) => {
   const distanceValue = cleanNum(req.body.distanceValue);
   const distanceUnit = req.body.distanceUnit === 'm' ? 'm' : 'min walk';
   const rate = String(req.body.rate || '').trim() || null;
+  const code = String(req.body.code || '').trim() || null;
 
   const { rows } = await pool.query(
-    `UPDATE parking_lots SET name = $1, total_stalls = $2, distance_value = $3, distance_unit = $4, rate = $5, updated_at = now()
-     WHERE id = $6 RETURNING *`,
-    [name, totalStalls, distanceValue, distanceUnit, rate, id]
+    `UPDATE parking_lots SET name = $1, total_stalls = $2, distance_value = $3, distance_unit = $4, rate = $5, code = $6, updated_at = now()
+     WHERE id = $7 RETURNING *`,
+    [name, totalStalls, distanceValue, distanceUnit, rate, code, id]
   );
   if (!rows.length) jsonError('Lot not found', 404);
   res.json(lotRow(rows[0]));

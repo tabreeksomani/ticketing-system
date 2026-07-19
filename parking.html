@@ -264,6 +264,7 @@
       const meta = [`📍 ${escapeHtml(fmtDistance(l))} away`];
       if (l.totalStalls) meta.push(`🅿️ ${l.totalStalls} total`);
       if (l.rate) meta.push(`💲 ${escapeHtml(l.rate)}`);
+      if (l.code) meta.push(`🏷️ ${escapeHtml(l.code)}`);
       return `
         <div class="lot-card ${isAvail ? 'is-available' : 'is-full'}">
           <div class="indicator ${isAvail ? 'go' : 'stop'}">${indicator}</div>
@@ -388,10 +389,12 @@
               <input id="mTotal" type="number" min="0" step="1" value="${l.totalStalls != null ? l.totalStalls : ''}" placeholder="0">
             </div>
             <div>
-              <label>Event parking rate</label>
-              <input id="mRate" type="text" value="${escapeHtml(l.rate || '')}" placeholder="e.g. $20 flat">
+              <label>Coupon code (optional)</label>
+              <input id="mCode" type="text" value="${escapeHtml(l.code || '')}" placeholder="e.g. SAVE20">
             </div>
           </div>
+          <label>Event parking rate</label>
+          <input id="mRate" type="text" value="${escapeHtml(l.rate || '')}" placeholder="e.g. $20 flat">
           <div class="grid-2">
             <div>
               <label>Distance from venue</label>
@@ -416,12 +419,13 @@
     if (lots.length) {
       html += `
         <div class="card" style="padding:8px 12px;"><div class="table-scroll"><table class="admin-table">
-          <thead><tr><th>Name</th><th>Status</th><th>Open</th><th>Total</th><th>Distance</th><th>Rate</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Coupon</th><th>Status</th><th>Open</th><th>Total</th><th>Distance</th><th>Rate</th><th></th></tr></thead>
           <tbody>
             ${lots.map(l => {
               const isAvail = l.status === 'available';
               return `<tr>
                 <td>${escapeHtml(l.name)}</td>
+                <td>${escapeHtml(l.code || '—')}</td>
                 <td><span class="pill-tag ${isAvail ? 'go' : 'stop'}">${isAvail ? 'Open' : 'Full'}</span></td>
                 <td>${l.availableStalls != null ? l.availableStalls : '—'}</td>
                 <td>${l.totalStalls || 0}</td>
@@ -465,6 +469,7 @@
     const body = {
       name: document.getElementById('mName').value,
       totalStalls: document.getElementById('mTotal').value,
+      code: document.getElementById('mCode').value,
       rate: document.getElementById('mRate').value,
       distanceValue: document.getElementById('mDist').value,
       distanceUnit: document.getElementById('mUnit').value,
