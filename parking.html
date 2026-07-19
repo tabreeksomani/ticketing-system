@@ -151,7 +151,7 @@
   async function api(path, options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
-    const res = await fetch(API + path, { ...options, headers });
+    const res = await fetch(API + path, Object.assign({}, options, { headers }));
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
     return data;

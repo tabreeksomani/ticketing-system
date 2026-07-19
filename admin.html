@@ -133,7 +133,7 @@
     const endH = Math.floor(endTotal / 60) % 24, endMin = endTotal % 60;
     const meridiem = (h) => (h < 12 ? 'AM' : 'PM');
     const hour12 = (h) => (h % 12 === 0 ? 12 : h % 12);
-    const clock = (h, min) => (min === 0 ? `${hour12(h)}` : `${hour12(h)}:${String(min).padStart(2, '0')}`);
+    const clock = (h, min) => (min === 0 ? `${hour12(h)}` : `${hour12(h)}:${min < 10 ? '0' + min : min}`);
     const startMer = meridiem(startH), endMer = meridiem(endH);
     // Share one meridiem across the range when both ends agree (5-5:30 AM),
     // otherwise show both (11:45 AM-12:15 PM).
@@ -246,7 +246,7 @@
   // color blindness.
   const STACK_PALETTE = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#D55E00', '#56B4E9', '#8C734C', '#5C4A33'];
   function stackedBarChart(hubs, opts = {}) {
-    const allTimes = [...new Set(hubs.flatMap(h => h.timeslots.map(t => formatDepartureTime(t.departureTime))))];
+    const allTimes = [...new Set(hubs.reduce((acc, h) => acc.concat(h.timeslots.map(t => formatDepartureTime(t.departureTime))), []))];
     const colorForTime = {};
     allTimes.forEach((t, i) => { colorForTime[t] = STACK_PALETTE[i % STACK_PALETTE.length]; });
 
@@ -361,7 +361,7 @@
   // apart the way a matrix always does once hubs have truly independent,
   // non-overlapping schedules.
   function hubTimeslotMatrixHtml(hubs) {
-    const allRaw = [...new Set(hubs.flatMap(h => h.timeslots.map(t => t.departureTime)))].sort();
+    const allRaw = [...new Set(hubs.reduce((acc, h) => acc.concat(h.timeslots.map(t => t.departureTime)), []))].sort();
     const colTotals = allRaw.map(raw => hubs.reduce((s, h) => {
       const slot = h.timeslots.find(t => t.departureTime === raw);
       return s + (slot ? slot.sold : 0);
@@ -438,7 +438,7 @@
   async function api(path, options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
-    const res = await fetch(API + path, { ...options, headers });
+    const res = await fetch(API + path, Object.assign({}, options, { headers }));
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       if (res.status === 401 && path !== '/auth/login') {
@@ -561,7 +561,7 @@
     const volunteerRows = [];
     data.forEach(hub => {
       hub.timeslots.forEach(t => {
-        if (isVolunteerDeparture(t.departureTime)) volunteerRows.push({ hubName: hub.hubName, ...t });
+        if (isVolunteerDeparture(t.departureTime)) volunteerRows.push(Object.assign({ hubName: hub.hubName }, t));
       });
     });
     const volSold = volunteerRows.reduce((s, r) => s + r.sold, 0);

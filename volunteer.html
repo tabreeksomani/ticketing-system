@@ -147,7 +147,7 @@
     let p = localStorage.getItem('demo_prefix');
     if (!p) {
       const bytes = crypto.getRandomValues(new Uint8Array(4));
-      p = 'T' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') + '-';
+      p = 'T' + Array.from(bytes, (b) => ('0' + b.toString(16)).slice(-2)).join('') + '-';
       localStorage.setItem('demo_prefix', p);
     }
     return p;
@@ -192,7 +192,7 @@
     const endH = Math.floor(endTotal / 60) % 24, endMin = endTotal % 60;
     const meridiem = (h) => (h < 12 ? 'AM' : 'PM');
     const hour12 = (h) => (h % 12 === 0 ? 12 : h % 12);
-    const clock = (h, min) => (min === 0 ? `${hour12(h)}` : `${hour12(h)}:${String(min).padStart(2, '0')}`);
+    const clock = (h, min) => (min === 0 ? `${hour12(h)}` : `${hour12(h)}:${min < 10 ? '0' + min : min}`);
     const startMer = meridiem(startH), endMer = meridiem(endH);
     // Share one meridiem across the range when both ends agree (5-5:30 AM),
     // otherwise show both (11:45 AM-12:15 PM).
@@ -256,7 +256,7 @@
   async function api(path, options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
-    const res = await fetch(API + path, { ...options, headers });
+    const res = await fetch(API + path, Object.assign({}, options, { headers }));
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       if (res.status === 401 && path !== '/auth/login') {
@@ -765,7 +765,7 @@
     const adultCountAtSubmit = validCodes.length - childCount;
     const childCountAtSubmit = childCount;
     try {
-      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, hubId: activeHubId, codes: validCodes, childCount }) });
+      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify(Object.assign({}, selection, { hubId: activeHubId, codes: validCodes, childCount })) });
       feedback(true);
       if (result.rejected.length) {
         // Partial rejection (some codes individually already sold) is a
