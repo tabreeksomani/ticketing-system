@@ -71,9 +71,15 @@
 
   /* ---- camera scanner ---- */
   .scanner-card { padding: 0; overflow: hidden; position: relative; }
-  .scanner-video-wrap { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; overflow: hidden; }
-  .scanner-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .scan-frame { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 62%; aspect-ratio: 1; border: 3px solid rgba(140,115,76,0.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0,0,0,0.35); pointer-events: none; }
+  /* padding-top:75% reserves a 4:3 box the old-fashioned way; kept instead of
+     `aspect-ratio` so pre-Chrome-88 browsers (e.g. Android 7, ~2017) don't
+     collapse the camera feed to zero height. Video is absolutely positioned to
+     fill that reserved box. */
+  .scanner-video-wrap { position: relative; width: 100%; height: 0; padding-top: 75%; background: #000; overflow: hidden; }
+  .scanner-video-wrap video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* padding-bottom:62% makes the frame square (its height matches its 62% width,
+     both measured against the parent) without `aspect-ratio`. */
+  .scan-frame { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 62%; height: 0; padding-bottom: 62%; border: 3px solid rgba(140,115,76,0.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0,0,0,0.35); pointer-events: none; }
   .scan-frame.flash { border-color: #22c55e; border-width: 3px; }
   .scanner-status { padding: 10px 14px; font-size: 12px; color: #756c5a; text-align: center; background: #FFFFFF; }
   .scanner-status.warn { color: #B91C1C; }
@@ -141,7 +147,7 @@
     let p = localStorage.getItem('demo_prefix');
     if (!p) {
       const bytes = crypto.getRandomValues(new Uint8Array(4));
-      p = 'T' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') + '-';
+      p = 'T' + Array.from(bytes, (b) => ('0' + b.toString(16)).slice(-2)).join('') + '-';
       localStorage.setItem('demo_prefix', p);
     }
     return p;
@@ -186,7 +192,7 @@
     const endH = Math.floor(endTotal / 60) % 24, endMin = endTotal % 60;
     const meridiem = (h) => (h < 12 ? 'AM' : 'PM');
     const hour12 = (h) => (h % 12 === 0 ? 12 : h % 12);
-    const clock = (h, min) => (min === 0 ? `${hour12(h)}` : `${hour12(h)}:${String(min).padStart(2, '0')}`);
+    const clock = (h, min) => (min === 0 ? `${hour12(h)}` : `${hour12(h)}:${min < 10 ? '0' + min : min}`);
     const startMer = meridiem(startH), endMer = meridiem(endH);
     // Share one meridiem across the range when both ends agree (5-5:30 AM),
     // otherwise show both (11:45 AM-12:15 PM).
@@ -250,7 +256,7 @@
   async function api(path, options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
-    const res = await fetch(API + path, { ...options, headers });
+    const res = await fetch(API + path, Object.assign({}, options, { headers }));
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       if (res.status === 401 && path !== '/auth/login') {
@@ -374,7 +380,7 @@
   // ============================================================== LOGIN ====
   async function renderLogin() {
     let logins = [];
-    try { logins = await api('/auth/login-ids?role=volunteer'); } catch (e) { /* login form still renders; submit will surface the error */ }
+    try { logins = await api('/auth/login-ids?app=ticketing'); } catch (e) { /* login form still renders; submit will surface the error */ }
     document.getElementById('app').innerHTML = `
       <div class="login-screen">
       <header>
@@ -759,7 +765,7 @@
     const adultCountAtSubmit = validCodes.length - childCount;
     const childCountAtSubmit = childCount;
     try {
-      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify({ ...selection, hubId: activeHubId, codes: validCodes, childCount }) });
+      const result = await api('/tickets/sell', { method: 'POST', body: JSON.stringify(Object.assign({}, selection, { hubId: activeHubId, codes: validCodes, childCount })) });
       feedback(true);
       if (result.rejected.length) {
         // Partial rejection (some codes individually already sold) is a

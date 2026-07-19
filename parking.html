@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<title>Parking</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  html, body { margin: 0; padding: 0; min-height: 100vh; background: #FFFFFF; color: #241C10; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: #FFFFFF; border-bottom: 1px solid #E8E1D3; padding: max(14px, env(safe-area-inset-top)) 16px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  header .title { font-weight: 800; font-size: 16px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
+  header .sub { font-size: 11px; color: #756c5a; }
+  .live { display: inline-block; background: #1565C0; color: #FFFFFF; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; padding: 2px 6px; border-radius: 5px; margin-right: 6px; vertical-align: middle; }
+  header button, header #homeBtn { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 9px 12px; cursor: pointer; min-height: 40px; }
+  header #homeBtn { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
+  main { padding: 14px; max-width: 480px; margin: 0 auto; padding-bottom: 40px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tab { flex: 1; text-align: center; padding: 11px 4px; border-radius: 10px; background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; cursor: pointer; font-size: 12px; font-weight: 700; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+  .tab.active { background: #8C734C; color: #fff; border-color: #8C734C; }
+  .card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
+  input, select { width: 100%; background: #F7F5F0; border: 1px solid #DDD3BE; border-radius: 10px; color: #241C10; padding: 14px; font-size: 17px; margin-bottom: 10px; outline: none; min-height: 50px; }
+  input:focus, select:focus { border-color: #8C734C; }
+  label { font-size: 11px; color: #57534E; display: block; margin-bottom: 4px; }
+  .btn { width: 100%; padding: 14px; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; min-height: 48px; }
+  .btn-primary { background: #8C734C; color: #fff; }
+  .btn-outline { background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; }
+  .btn-danger { background: #B91C1C; color: #fff; }
+  .btn + .btn { margin-top: 8px; }
+
+  /* ---- dashboard ---- */
+  .summary-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  .summary-chip { flex: 1; background: #F7F5F0; border: 1px solid #E8E1D3; border-radius: 12px; padding: 12px 8px; text-align: center; }
+  .summary-chip.go { background: #DCFCE7; border-color: #86EFAC; }
+  .summary-chip.stop { background: #FEE2E2; border-color: #FCA5A5; }
+  .summary-chip .num { display: block; font-size: 26px; font-weight: 800; font-family: 'Palatino Linotype', Georgia, serif; line-height: 1; }
+  .summary-chip .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: #57534E; margin-top: 5px; display: block; }
+  .sortbar { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .sortbar button { flex: 1; font-size: 11px; font-weight: 700; padding: 8px 4px; border-radius: 8px; background: #F7F5F0; border: 1px solid #E2D9C4; color: #57534E; cursor: pointer; min-height: 38px; white-space: nowrap; }
+  .sortbar button.active { background: #8C734C; color: #fff; border-color: #8C734C; }
+  .lot-card { display: flex; align-items: center; gap: 12px; background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 14px; padding: 14px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
+  .lot-card.is-full { opacity: 0.9; }
+  .indicator { flex: 0 0 auto; width: 54px; height: 54px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; }
+  .indicator.go { background: #16A34A; }
+  .indicator.stop { background: #DC2626; }
+  .indicator .count { font-size: 22px; font-weight: 800; line-height: 1; font-family: 'Palatino Linotype', Georgia, serif; }
+  .indicator .count-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+  .indicator .glyph { font-size: 26px; font-weight: 800; }
+  .lot-info { flex: 1; min-width: 0; }
+  .lot-info h3 { margin: 0 0 4px; font-size: 15px; color: #241C10; }
+  .lot-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #756c5a; }
+  .status-word { flex: 0 0 auto; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px; padding: 5px 9px; border-radius: 10px; }
+  .status-word.go { background: #DCFCE7; color: #166534; }
+  .status-word.stop { background: #FEE2E2; color: #B91C1C; }
+
+  /* ---- pickers / lists ---- */
+  .pill { background: #FFFFFF; color: #57534E; border: 1px solid #E2D9C4; border-radius: 12px; padding: 14px; margin-bottom: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; min-height: 56px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); width: 100%; text-align: left; }
+  .pill.selected { border-color: #8C734C; background: #F3ECDD; }
+  .pill .name { font-weight: 700; color: #241C10; font-size: 15px; }
+  .pill .meta { font-size: 12px; color: #756c5a; margin-top: 3px; }
+  .pill .chevron { color: #B8A97F; font-size: 22px; }
+  .status-toggle { display: flex; gap: 8px; margin-bottom: 12px; }
+  .status-toggle label { flex: 1; margin: 0; border: 1px solid #E2D9C4; border-radius: 10px; padding: 14px; text-align: center; cursor: pointer; font-size: 14px; font-weight: 700; color: #57534E; background: #F7F5F0; }
+  .status-toggle input { display: none; }
+  .status-toggle label.on-go { border-color: #16A34A; background: #DCFCE7; color: #166534; }
+  .status-toggle label.on-stop { border-color: #DC2626; background: #FEE2E2; color: #B91C1C; }
+  .hint { font-size: 11px; color: #756c5a; margin: -4px 0 10px; }
+  .section-label { font-size: 11px; color: #8C734C; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 800; margin: 14px 0 8px; }
+  .empty { text-align: center; color: #756c5a; padding: 26px 16px; font-size: 13px; }
+  .grid-2 { display: flex; gap: 10px; }
+  .grid-2 > div { flex: 1; }
+
+  /* ---- manage table ---- */
+  .table-scroll { overflow-x: auto; }
+  table.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.admin-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: #8C734C; border-bottom: 1px solid #E8E1D3; padding: 8px 6px; white-space: nowrap; }
+  table.admin-table td { padding: 10px 6px; border-bottom: 1px solid #F1ECE0; vertical-align: middle; }
+  .pill-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 8px; border-radius: 9px; }
+  .pill-tag.go { background: #DCFCE7; color: #166534; }
+  .pill-tag.stop { background: #FEE2E2; color: #B91C1C; }
+  .row-actions { display: flex; gap: 10px; white-space: nowrap; }
+  .row-actions button { background: none; border: none; cursor: pointer; font-size: 13px; font-weight: 700; padding: 4px; }
+  .row-actions .edit { color: #8C734C; }
+  .row-actions .del { color: #B91C1C; }
+
+  /* ---- toast + login (matches the other portals) ---- */
+  .toast { position: fixed; top: calc(66px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 40; max-width: 92%; text-align: center; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  .toast-error { background: #FEE2E2; border: 1px solid #FCA5A5; color: #B91C1C; }
+  .toast-success { background: #DCFCE7; border: 1px solid #86EFAC; color: #166534; }
+  .login-screen { min-height: 100vh; display: flex; flex-direction: column; }
+  .login-wrap { display: flex; align-items: center; justify-content: center; flex: 1; padding: 20px; position: relative; overflow: hidden; }
+  .brand-watermark { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 460px; max-width: 160%; opacity: 0.14; pointer-events: none; z-index: 0; }
+  .login-card { position: relative; z-index: 1; max-width: 360px; width: 100%; }
+  .login-card h1 { font-size: 18px; margin: 0 0 4px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
+  .login-card .sub { font-size: 12px; color: #756c5a; margin-bottom: 18px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="src/footer.js" defer></script>
+<script>
+  const API = 'api';
+  let token = localStorage.getItem('parking_token');
+  let user = JSON.parse(localStorage.getItem('parking_user') || 'null');
+
+  let tab = 'dashboard';        // 'dashboard' | 'update' | 'manage'
+  let sort = 'available';       // dashboard sort key
+  let lots = [];                // last-loaded lot list
+  let selectedLotId = null;     // update tab: lot being edited
+  let editLot = null;           // manage tab: lot in the add/edit form (null = closed)
+  let showAddForm = false;      // manage tab: add form open with no existing lot
+  let refreshTimer = null;      // dashboard auto-refresh
+
+  // ---- roles this portal understands ----
+  const canUpdate = () => user && ['parking_marshal', 'parking_admin'].includes(user.role);
+  const canManage = () => user && user.role === 'parking_admin';
+
+  // Which tabs a role sees, in display order. Admins run the lots (update +
+  // manage) and don't get the read-only dashboard; marshals get dashboard +
+  // update; everyone else (dashboard role, or any other authed login) is
+  // dashboard-only.
+  const TAB_LABELS = { dashboard: 'Dashboard', update: 'Update', manage: 'Manage' };
+  function allowedTabs() {
+    const t = [];
+    if (user && user.role !== 'parking_admin') t.push('dashboard');
+    if (canUpdate()) t.push('update');
+    if (canManage()) t.push('manage');
+    return t;
+  }
+
+  // ============================================================ helpers ====
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+  function icon(name, size = 16) {
+    const paths = {
+      home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11h14V9"/>',
+      car: '<path d="M5 17h14M6 17l-1.5-5A2 2 0 0 1 6.4 9.4l1-2.6A2 2 0 0 1 9.3 5.5h5.4a2 2 0 0 1 1.9 1.3l1 2.6a2 2 0 0 1 1.9 2.6L19 17"/><circle cx="7.5" cy="17.5" r="1.5"/><circle cx="16.5" cy="17.5" r="1.5"/>',
+      refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+    };
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px">${paths[name] || ''}</svg>`;
+  }
+  function showToast(msg, kind = 'error') {
+    const t = document.createElement('div');
+    t.className = 'toast ' + (kind === 'success' ? 'toast-success' : 'toast-error');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2400);
+  }
+  async function api(path, options = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const res = await fetch(API + path, Object.assign({}, options, { headers }));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+  function fmtDistance(lot) {
+    if (lot.distanceValue === null || lot.distanceValue === undefined || lot.distanceValue === '') return '—';
+    const v = Number(lot.distanceValue);
+    const val = Number.isInteger(v) ? String(v) : String(v);
+    return `${val} ${lot.distanceUnit}`;
+  }
+
+  // ============================================================== login ====
+  async function renderLogin() {
+    let logins = [];
+    try { logins = await api('/auth/login-ids?app=parking'); } catch (e) { /* form still renders; submit will surface the error */ }
+    const options = logins.map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)}</option>`).join('');
+    document.getElementById('app').innerHTML = `
+      <div class="login-screen">
+        <header>
+          <div class="title"><span class="live">LIVE</span>${icon('car', 18)} Parking</div>
+          <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
+        </header>
+        <div class="login-wrap"><img class="brand-watermark" src="vendor/brand-mark.svg" alt="" /><div class="card login-card">
+          <h1>${icon('car', 20)} Parking</h1>
+          <div class="sub">Choose your login and enter its password to continue.</div>
+          <label>Login</label>
+          <select id="loginId">${options}</select>
+          <label>Password</label>
+          <input id="loginPass" type="password" autocomplete="current-password" />
+          <button class="btn btn-primary" id="loginBtn">Sign in</button>
+        </div></div>
+      </div>`;
+    document.getElementById('loginBtn').onclick = doLogin;
+    document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  }
+  async function doLogin() {
+    const id = document.getElementById('loginId').value.trim();
+    const secret = document.getElementById('loginPass').value;
+    try {
+      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ id, secret }) });
+      token = data.token; user = data.user;
+      localStorage.setItem('parking_token', token);
+      localStorage.setItem('parking_user', JSON.stringify(user));
+      tab = 'dashboard';
+      boot();
+    } catch (e) { showToast(e.message); }
+  }
+  function logout() {
+    stopRefresh();
+    localStorage.removeItem('parking_token');
+    localStorage.removeItem('parking_user');
+    token = null; user = null; lots = []; selectedLotId = null; editLot = null; showAddForm = false;
+    renderLogin();
+  }
+
+  // ============================================================== shell ====
+  function renderShell(bodyHtml) {
+    const tabs = allowedTabs().map(id => ({ id, label: TAB_LABELS[id] }));
+
+    document.getElementById('app').innerHTML = `
+      <header>
+        <div><div class="title"><span class="live">LIVE</span>${icon('car', 18)} Parking - ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
+        <div style="display:flex;gap:8px;">
+          <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
+          <button id="logoutBtn">Log out</button>
+        </div>
+      </header>
+      <main>
+        <div class="tabs">
+          ${tabs.map(t => `<div class="tab ${tab === t.id ? 'active' : ''}" data-tab="${t.id}">${t.label}</div>`).join('')}
+        </div>
+        <div id="view">${bodyHtml}</div>
+      </main>`;
+    document.getElementById('logoutBtn').onclick = logout;
+    document.querySelectorAll('.tab').forEach(el => {
+      el.onclick = () => { tab = el.dataset.tab; render(); };
+    });
+  }
+
+  // ============================================================= render ====
+  function render() {
+    stopRefresh();
+    const allowed = allowedTabs();
+    if (!allowed.includes(tab)) tab = allowed[0];
+    if (tab === 'update') return renderUpdate();
+    if (tab === 'manage') return renderManage();
+    return renderDashboard();
+  }
+
+  async function loadLots(sortKey) {
+    lots = await api('/parking/lots?sort=' + encodeURIComponent(sortKey || sort));
+    return lots;
+  }
+
+  // ---------------------------------------------------------- dashboard ----
+  async function renderDashboard() {
+    renderShell('<div class="empty">Loading lots…</div>');
+    try { await loadLots(sort); } catch (e) { document.getElementById('view').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; return; }
+
+    const available = lots.filter(l => l.status === 'available').length;
+    const full = lots.length - available;
+    const sorts = [['available', 'Available first'], ['distance', 'Distance'], ['spots', '# Spots']];
+
+    const cards = lots.length ? lots.map(l => {
+      const isAvail = l.status === 'available';
+      const hasCount = l.availableStalls !== null && l.availableStalls !== undefined;
+      const indicator = hasCount
+        ? `<span class="count">${l.availableStalls}</span><span class="count-lbl">open</span>`
+        : `<span class="glyph">${isAvail ? '✓' : '✕'}</span>`;
+      const meta = [`📍 ${escapeHtml(fmtDistance(l))} away`];
+      if (l.totalStalls) meta.push(`🅿️ ${l.totalStalls} total`);
+      if (l.rate) meta.push(`💲 ${escapeHtml(l.rate)}`);
+      if (l.code) meta.push(`🏷️ ${escapeHtml(l.code)}`);
+      return `
+        <div class="lot-card ${isAvail ? 'is-available' : 'is-full'}">
+          <div class="indicator ${isAvail ? 'go' : 'stop'}">${indicator}</div>
+          <div class="lot-info">
+            <h3>${escapeHtml(l.name)}</h3>
+            <div class="lot-meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>
+          </div>
+          <span class="status-word ${isAvail ? 'go' : 'stop'}">${isAvail ? 'Open' : 'Full'}</span>
+        </div>`;
+    }).join('') : '<div class="empty">No parking lots yet. Ask a parking admin to add one.</div>';
+
+    document.getElementById('view').innerHTML = `
+      <div class="summary-row">
+        <div class="summary-chip go"><span class="num">${available}</span><span class="lbl">Available</span></div>
+        <div class="summary-chip stop"><span class="num">${full}</span><span class="lbl">Full</span></div>
+        <div class="summary-chip"><span class="num">${lots.length}</span><span class="lbl">Total Lots</span></div>
+      </div>
+      <div class="sortbar">
+        ${sorts.map(([k, lbl]) => `<button data-sort="${k}" class="${sort === k ? 'active' : ''}">${lbl}</button>`).join('')}
+      </div>
+      ${cards}`;
+    document.querySelectorAll('.sortbar button').forEach(b => {
+      b.onclick = () => { sort = b.dataset.sort; renderDashboard(); };
+    });
+    // Auto-refresh every 60s, matching the original dashboard's meta refresh.
+    startRefresh();
+  }
+  function startRefresh() {
+    stopRefresh();
+    refreshTimer = setInterval(() => { if (tab === 'dashboard') renderDashboard(); }, 60000);
+  }
+  function stopRefresh() {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  }
+
+  // ------------------------------------------------------------- update ----
+  async function renderUpdate() {
+    renderShell('<div class="empty">Loading lots…</div>');
+    try { await loadLots('available'); } catch (e) { document.getElementById('view').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; return; }
+
+    const selected = lots.find(l => l.id === selectedLotId) || null;
+    let html = '';
+
+    html += `<div class="section-label">Select a lot to update</div>`;
+    html += lots.length ? lots.map(l => {
+      const isAvail = l.status === 'available';
+      const openTxt = isAvail && l.availableStalls !== null && l.availableStalls !== undefined ? ` · ${l.availableStalls} open` : '';
+      return `
+        <button class="pill ${l.id === selectedLotId ? 'selected' : ''}" data-lot="${l.id}">
+          <span><span class="name">${escapeHtml(l.name)}</span>
+          <span class="meta">${isAvail ? '🟢 Available' : '🔴 Full'}${openTxt} · ${escapeHtml(fmtDistance(l))}</span></span>
+          <span class="chevron">›</span>
+        </button>`;
+    }).join('') : '<div class="empty">No parking lots yet. Ask a parking admin to add one.</div>';
+
+    if (selected) {
+      const isAvail = selected.status === 'available';
+      html += `
+        <div class="card">
+          <h3 style="margin:0 0 4px;font-size:17px;">${escapeHtml(selected.name)}</h3>
+          <div class="hint">${escapeHtml(fmtDistance(selected))} away · ${selected.totalStalls || 0} total stalls</div>
+          <label>Status</label>
+          <div class="status-toggle">
+            <label class="${isAvail ? 'on-go' : ''}"><input type="radio" name="pstatus" value="available" ${isAvail ? 'checked' : ''}> 🟢 Available</label>
+            <label class="${!isAvail ? 'on-stop' : ''}"><input type="radio" name="pstatus" value="full" ${!isAvail ? 'checked' : ''}> 🔴 Full</label>
+          </div>
+          <label># of open stalls (optional)</label>
+          <input id="stallCount" type="number" min="0" step="1" inputmode="numeric" placeholder="Leave blank if unknown" value="${selected.availableStalls !== null && selected.availableStalls !== undefined ? selected.availableStalls : ''}">
+          <div class="hint">Only shown on the dashboard when the lot is Available.</div>
+          <button class="btn btn-primary" id="saveStatus">Save update</button>
+          <button class="btn btn-outline" id="pickAnother">Choose a different lot</button>
+        </div>`;
+    }
+
+    document.getElementById('view').innerHTML = html;
+
+    document.querySelectorAll('.pill[data-lot]').forEach(b => {
+      b.onclick = () => { selectedLotId = Number(b.dataset.lot); renderUpdate(); };
+    });
+    // Live-toggle the pill highlight on the status radios for immediate feedback.
+    document.querySelectorAll('input[name="pstatus"]').forEach(r => {
+      r.onchange = () => {
+        document.querySelectorAll('.status-toggle label').forEach(l => l.classList.remove('on-go', 'on-stop'));
+        const picked = document.querySelector('input[name="pstatus"]:checked').value;
+        r.closest('label').classList.add(picked === 'full' ? 'on-stop' : 'on-go');
+      };
+    });
+    const pickAnother = document.getElementById('pickAnother');
+    if (pickAnother) pickAnother.onclick = () => { selectedLotId = null; renderUpdate(); };
+    const saveBtn = document.getElementById('saveStatus');
+    if (saveBtn) saveBtn.onclick = async () => {
+      const status = document.querySelector('input[name="pstatus"]:checked').value;
+      const availableStalls = document.getElementById('stallCount').value;
+      try {
+        await api(`/parking/lots/${selectedLotId}/status`, {
+          method: 'POST',
+          body: JSON.stringify({ status, availableStalls }),
+        });
+        showToast('Lot status updated.', 'success');
+        renderUpdate();
+      } catch (e) { showToast(e.message); }
+    };
+  }
+
+  // ------------------------------------------------------------- manage ----
+  async function renderManage() {
+    renderShell('<div class="empty">Loading lots…</div>');
+    try { await loadLots('available'); } catch (e) { document.getElementById('view').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; return; }
+
+    let html = '';
+    if (editLot || showAddForm) {
+      const l = editLot || {};
+      const unit = l.distanceUnit || 'min walk';
+      html += `
+        <div class="card">
+          <h3 style="margin:0 0 10px;font-size:16px;">${editLot ? 'Edit lot' : 'Add lot'}</h3>
+          <label>Lot name</label>
+          <input id="mName" type="text" value="${escapeHtml(l.name || '')}" placeholder="e.g. Lot C – North Building">
+          <div class="grid-2">
+            <div>
+              <label>Total stalls</label>
+              <input id="mTotal" type="number" min="0" step="1" value="${l.totalStalls != null ? l.totalStalls : ''}" placeholder="0">
+            </div>
+            <div>
+              <label>Coupon code (optional)</label>
+              <input id="mCode" type="text" value="${escapeHtml(l.code || '')}" placeholder="e.g. SAVE20">
+            </div>
+          </div>
+          <label>Event parking rate</label>
+          <input id="mRate" type="text" value="${escapeHtml(l.rate || '')}" placeholder="e.g. $20 flat">
+          <div class="grid-2">
+            <div>
+              <label>Distance from venue</label>
+              <input id="mDist" type="number" min="0" step="0.1" value="${l.distanceValue != null ? l.distanceValue : ''}" placeholder="e.g. 5">
+            </div>
+            <div>
+              <label>Unit</label>
+              <select id="mUnit">
+                <option value="min walk" ${unit === 'min walk' ? 'selected' : ''}>min walk</option>
+                <option value="m" ${unit === 'm' ? 'selected' : ''}>meters</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="saveLot">${editLot ? 'Save changes' : 'Add lot'}</button>
+          <button class="btn btn-outline" id="cancelLot">Cancel</button>
+        </div>`;
+    } else {
+      html += `<button class="btn btn-primary" id="addLotBtn" style="margin-bottom:12px;">+ Add new lot</button>`;
+    }
+
+    html += `<div class="section-label">All lots (${lots.length})</div>`;
+    if (lots.length) {
+      html += `
+        <div class="card" style="padding:8px 12px;"><div class="table-scroll"><table class="admin-table">
+          <thead><tr><th>Name</th><th>Coupon</th><th>Status</th><th>Open</th><th>Total</th><th>Distance</th><th>Rate</th><th></th></tr></thead>
+          <tbody>
+            ${lots.map(l => {
+              const isAvail = l.status === 'available';
+              return `<tr>
+                <td>${escapeHtml(l.name)}</td>
+                <td>${escapeHtml(l.code || '—')}</td>
+                <td><span class="pill-tag ${isAvail ? 'go' : 'stop'}">${isAvail ? 'Open' : 'Full'}</span></td>
+                <td>${l.availableStalls != null ? l.availableStalls : '—'}</td>
+                <td>${l.totalStalls || 0}</td>
+                <td>${escapeHtml(fmtDistance(l))}</td>
+                <td>${escapeHtml(l.rate || '—')}</td>
+                <td><div class="row-actions"><button class="edit" data-edit="${l.id}">Edit</button><button class="del" data-del="${l.id}">Delete</button></div></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div></div>`;
+    } else {
+      html += '<div class="empty">No lots yet.</div>';
+    }
+
+    document.getElementById('view').innerHTML = html;
+
+    const addBtn = document.getElementById('addLotBtn');
+    if (addBtn) addBtn.onclick = () => { showAddForm = true; editLot = null; renderManage(); };
+    const cancelBtn = document.getElementById('cancelLot');
+    if (cancelBtn) cancelBtn.onclick = () => { editLot = null; showAddForm = false; renderManage(); };
+    const saveBtn = document.getElementById('saveLot');
+    if (saveBtn) saveBtn.onclick = saveLot;
+
+    document.querySelectorAll('button[data-edit]').forEach(b => {
+      b.onclick = () => { editLot = lots.find(l => l.id === Number(b.dataset.edit)); showAddForm = false; renderManage(); };
+    });
+    document.querySelectorAll('button[data-del]').forEach(b => {
+      b.onclick = async () => {
+        const l = lots.find(x => x.id === Number(b.dataset.del));
+        if (!confirm(`Delete "${l.name}"?`)) return;
+        try {
+          await api(`/parking/lots/${l.id}`, { method: 'DELETE' });
+          showToast('Lot deleted.', 'success');
+          if (editLot && editLot.id === l.id) editLot = null;
+          renderManage();
+        } catch (e) { showToast(e.message); }
+      };
+    });
+  }
+  async function saveLot() {
+    const body = {
+      name: document.getElementById('mName').value,
+      totalStalls: document.getElementById('mTotal').value,
+      code: document.getElementById('mCode').value,
+      rate: document.getElementById('mRate').value,
+      distanceValue: document.getElementById('mDist').value,
+      distanceUnit: document.getElementById('mUnit').value,
+    };
+    try {
+      if (editLot) {
+        await api(`/parking/lots/${editLot.id}`, { method: 'PUT', body: JSON.stringify(body) });
+        showToast('Lot updated.', 'success');
+      } else {
+        await api('/parking/lots', { method: 'POST', body: JSON.stringify(body) });
+        showToast('Lot added.', 'success');
+      }
+      editLot = null; showAddForm = false;
+      renderManage();
+    } catch (e) { showToast(e.message); }
+  }
+
+  // =============================================================== boot ====
+  function boot() {
+    if (!token || !user) { renderLogin(); return; }
+    render();
+  }
+  boot();
+</script>
+</body>
+</html>
