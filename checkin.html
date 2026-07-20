@@ -348,7 +348,15 @@
         return;
       }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+        // Request lower resolution and a lower target frame rate to allow the sensor to increase exposure time
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 12, max: 15 }
+          }
+        });
         videoEl.srcObject = stream;
         await videoEl.play();
         setStatus('');
@@ -429,7 +437,12 @@
       try {
         setStatus('Switching camera…');
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: device.deviceId } }
+          video: {
+            deviceId: { exact: device.deviceId },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 12, max: 15 }
+          }
         });
         videoEl.srcObject = stream;
         await videoEl.play();
@@ -438,7 +451,13 @@
         console.error('Failed to switch camera:', err);
         setStatus('Failed to switch camera. Retrying...', true);
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 12, max: 15 }
+            }
+          });
           videoEl.srcObject = stream;
           await videoEl.play();
           setStatus('');
@@ -452,8 +471,8 @@
     function loop() {
       if (stopped) return;
       if (!paused && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-        // Downscale frame to maximum 480px width or height to minimize CPU processing overhead
-        const maxDim = 480;
+        // Downscale frame to maximum 320px width or height to minimize CPU processing overhead
+        const maxDim = 320;
         let w = videoEl.videoWidth;
         let h = videoEl.videoHeight;
         if (w > maxDim || h > maxDim) {
@@ -493,8 +512,8 @@
           }
         } catch (e) {}
       }
-      // Run loop 6 times a second (160ms interval) to save CPU and battery on old tablets
-      setTimeout(loop, 160);
+      // Run loop 4 times a second (250ms interval) to save CPU and battery on old tablets
+      setTimeout(loop, 250);
     }
 
     function stop() {
