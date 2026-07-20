@@ -486,8 +486,8 @@
     function loop() {
       if (stopped) return;
       if (!paused && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-        // Downscale dynamically based on device specs
-        const maxDim = isLowSpec ? 240 : 480;
+        // Downscale dynamically based on device specs (384px for low-spec to preserve QR detail)
+        const maxDim = isLowSpec ? 384 : 480;
         let w = videoEl.videoWidth;
         let h = videoEl.videoHeight;
         if (w > maxDim || h > maxDim) {
@@ -531,8 +531,8 @@
           } catch (e) {}
         }, 0);
       }
-      // Modern: 120ms (8 Hz), Low-spec: 300ms (3.3 Hz)
-      setTimeout(loop, isLowSpec ? 300 : 120);
+      // Modern: 120ms (8 Hz), Low-spec: 200ms (5 Hz)
+      setTimeout(loop, isLowSpec ? 200 : 120);
     }
 
     function stop() {
