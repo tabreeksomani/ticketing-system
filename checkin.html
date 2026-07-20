@@ -557,7 +557,7 @@
     document.getElementById('roleArea').innerHTML = `
       <div class="card login-card">
         <label>Login</label>
-        <select id="hubLoginSelect">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.hubNames.length ? l.hubNames.join(', ') : l.name)}</option>`).join('')}</select>
+        <select id="hubLoginSelect">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.id)}</option>`).join('')}</select>
         <label>Password</label>
         <input id="hubLoginPass" type="password" />
         <button class="btn btn-primary" id="hubLoginBtn">Sign in</button>
