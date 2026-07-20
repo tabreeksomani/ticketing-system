@@ -279,6 +279,9 @@
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const recent = new Map();
+    let videoDevices = [];
+    let currentDeviceIndex = -1;
+    const idPrefix = videoEl.id ? videoEl.id.replace('Video', '') : '';
 
     function setStatus(msg, warn) {
       if (!statusEl) return;
@@ -302,8 +305,98 @@
         await videoEl.play();
         setStatus('');
         loop();
+
+        // Enumerate devices once permission is granted
+        await initDevices();
       } catch (e) {
         setStatus('Camera access denied — use manual entry below, or allow camera access and reload.', true);
+      }
+    }
+
+    async function initDevices() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        if (videoDevices.length > 1) {
+          // Identify the current track device ID or label
+          const activeTrack = stream ? stream.getVideoTracks()[0] : null;
+          let activeId = null;
+          let activeLabel = null;
+
+          if (activeTrack) {
+            activeLabel = activeTrack.label;
+            if (activeTrack.getSettings) {
+              const settings = activeTrack.getSettings();
+              activeId = settings ? settings.deviceId : null;
+            }
+          }
+
+          // Match the active track to find our current index
+          currentDeviceIndex = videoDevices.findIndex(d => {
+            if (activeId && d.deviceId) return d.deviceId === activeId;
+            if (activeLabel && d.label) return d.label === activeLabel;
+            return false;
+          });
+
+          // If current selection is front camera, check if there's a back/rear camera to auto-switch to
+          const isFront = activeLabel && (activeLabel.toLowerCase().includes('front') || activeLabel.toLowerCase().includes('user'));
+          if (currentDeviceIndex === -1 || isFront) {
+            const backIndex = videoDevices.findIndex(d => {
+              const label = (d.label || '').toLowerCase();
+              return label.includes('back') || label.includes('rear') || label.includes('environment') || label.includes('camera 1') || label.includes('main');
+            });
+            if (backIndex !== -1 && backIndex !== currentDeviceIndex) {
+              await switchCamera(backIndex);
+              return;
+            }
+          }
+
+          // Show the switch button since multiple cameras exist
+          const switchBtn = document.getElementById(idPrefix + 'SwitchCameraBtn');
+          if (switchBtn) {
+            switchBtn.style.display = 'flex';
+            switchBtn.onclick = async () => {
+              if (videoDevices.length > 1) {
+                const nextIndex = (currentDeviceIndex + 1) % videoDevices.length;
+                await switchCamera(nextIndex);
+              }
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to enumerate devices:', err);
+      }
+    }
+
+    async function switchCamera(index) {
+      currentDeviceIndex = index;
+      const device = videoDevices[index];
+      if (!device) return;
+
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+
+      try {
+        setStatus('Switching camera…');
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: device.deviceId } }
+        });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        setStatus('');
+      } catch (err) {
+        console.error('Failed to switch camera:', err);
+        setStatus('Failed to switch camera. Retrying...', true);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          videoEl.srcObject = stream;
+          await videoEl.play();
+          setStatus('');
+        } catch (e) {
+          setStatus('Camera error.', true);
+        }
       }
     }
 
@@ -311,11 +404,24 @@
     function loop() {
       if (stopped) return;
       if (!paused && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-        canvas.width = videoEl.videoWidth;
-        canvas.height = videoEl.videoHeight;
-        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+        // Downscale frame to maximum 480px width or height to minimize CPU processing overhead
+        const maxDim = 480;
+        let w = videoEl.videoWidth;
+        let h = videoEl.videoHeight;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(videoEl, 0, 0, w, h);
         try {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, w, h);
           const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
           if (result && result.data) {
             const now = Date.now();
@@ -323,8 +429,6 @@
               recent.set(result.data, now);
               if (frameEl) {
                 frameEl.classList.add('flash');
-                // Let the flash register for a beat before freezing, then hold
-                // the "captured" snapshot for the rest of the flash.
                 setTimeout(() => {
                   if (stopped) return;
                   paused = true;
@@ -341,7 +445,8 @@
           }
         } catch (e) {}
       }
-      requestAnimationFrame(loop);
+      // Run loop 6 times a second (160ms interval) to save CPU and battery on old tablets
+      setTimeout(loop, 160);
     }
 
     function stop() {
@@ -357,10 +462,13 @@
 
   function scannerCardHtml(idPrefix) {
     return `
-      <div class="card scanner-card">
+      <div class="card scanner-card" style="position:relative;">
         <div class="scanner-video-wrap">
           <video id="${idPrefix}Video" playsinline muted autoplay></video>
           <div class="scan-frame" id="${idPrefix}Frame"></div>
+          <button id="${idPrefix}SwitchCameraBtn" class="scanner-switch-btn" style="position: absolute; top: 12px; right: 12px; z-index: 10; background: rgba(36, 28, 16, 0.7); color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: none; align-items: center; justify-content: center; cursor: pointer; outline: none; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
+            ${icon('swap', 18)}
+          </button>
         </div>
         <div class="scanner-status" id="${idPrefix}Status">Starting camera…</div>
       </div>
