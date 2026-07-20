@@ -1300,10 +1300,16 @@
   // it's the live phone-width Sales tab where vertical bars get squeezed
   // thin past ~8-10 hubs, not a screenshot rendered at report width).
   let reportData = null;
+  let reportDailyData = null;
 
   async function renderReportTab() {
     showLoadingIfEmpty();
-    try { reportData = await api('/dashboard/sales'); } catch (e) { showToast(e.message); return; }
+    try {
+      [reportData, reportDailyData] = await Promise.all([
+        api('/dashboard/sales'),
+        api('/dashboard/daily-sales'),
+      ]);
+    } catch (e) { showToast(e.message); return; }
     renderReportHtml();
   }
 
@@ -1322,6 +1328,7 @@
 
   function renderReportHtml() {
     const data = reportData;
+    const daily = reportDailyData;
     const totalSold = data.reduce((s, h) => s + h.totalSold, 0);
     const totalAdult = data.reduce((s, h) => s + h.totalAdult, 0);
     const totalChild = data.reduce((s, h) => s + h.totalChild, 0);
@@ -1361,6 +1368,12 @@
         <div style="display:flex; flex-wrap:wrap; gap:16px;">
           <div style="flex:1 1 200px; min-width:0;">${verticalStackedBarChart(data)}</div>
           <div style="flex:0 1 140px;">${verticalStackedBarLegend(data)}</div>
+        </div>
+        <div style="border-top:1px solid #D9D3C4; margin:40px 0 24px;"></div>
+        <h2 style="text-align:center; font-family:'Palatino Linotype', Georgia, serif; font-size:18px; color:#241C10; margin:0 0 16px;">Mulaqat Express — Sales by Date-of-sale</h2>
+        <div style="display:flex; flex-wrap:wrap; gap:16px;">
+          <div style="flex:1 1 200px; min-width:0;">${verticalStackedBarChartByDate(data, daily)}</div>
+          <div style="flex:0 1 140px;">${verticalStackedBarLegendByDate(data, daily)}</div>
         </div>
       </div>
     `);
@@ -1454,6 +1467,102 @@
           <div>
             <div style="font-size:13px; font-weight:700; color:#241C10;">${escapeHtml(t)}</div>
             <div style="font-size:12px; color:#756c5a;">${totalForTime[t]}</div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  // Calendar days present in the data, chronological. Day strings are
+  // "YYYY-MM-DD" (already Pacific-time buckets from the backend), so plain
+  // lexicographic sort is chronological - the date-of-sale analog of
+  // sortedTimeslotLabels for the by-time chart.
+  function sortedSaleDays(dailyRows) {
+    const days = [];
+    dailyRows.forEach(r => { if (!days.includes(r.day)) days.push(r.day); });
+    return days.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  }
+
+  // "2026-07-19" -> "Jul 19". Parsed by hand (not new Date()) to avoid the
+  // UTC-midnight-shifts-the-day trap that would misdate a Pacific day string.
+  function formatSaleDay(dayStr) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const parts = String(dayStr).split('-');
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    return `${MONTHS[(m || 1) - 1]} ${d}`;
+  }
+
+  // Identical to verticalStackedBarChart - one bar per hub, same layout,
+  // sizing, palette, and label treatment - except each bar is stacked by
+  // date-of-sale instead of departure timeslot. dailyRows is one
+  // {hubId, day, count} record per hub+day from /dashboard/daily-sales.
+  function verticalStackedBarChartByDate(hubs, dailyRows) {
+    const height = 320;
+    const allDays = sortedSaleDays(dailyRows);
+    const colorForDay = {};
+    allDays.forEach((d, i) => { colorForDay[d] = REPORT_MONO_PALETTE[i % REPORT_MONO_PALETTE.length]; });
+
+    const byHub = {}; // hubId -> { day -> count }
+    dailyRows.forEach(r => {
+      const days = byHub[r.hubId] || (byHub[r.hubId] = {});
+      days[r.day] = (days[r.day] || 0) + r.count;
+    });
+    const maxTotal = Math.max(1, ...hubs.map(h => allDays.reduce((s, d) => s + ((byHub[h.hubId] || {})[d] || 0), 0)));
+
+    // The two lightest shades need dark text - white would be nearly
+    // invisible against them.
+    const textColorForDay = {};
+    allDays.forEach((d, i) => { textColorForDay[d] = i < 2 ? '#241C10' : '#fff'; });
+
+    const bars = hubs.map(h => {
+      const days = byHub[h.hubId] || {};
+      const total = allDays.reduce((s, d) => s + (days[d] || 0), 0);
+      const barPixelHeight = Math.max(Math.round((total / maxTotal) * height), 2);
+      const ordered = allDays.filter(d => days[d] > 0).slice().reverse();
+      const segments = ordered.map(d => {
+        const val = days[d];
+        const segHeight = Math.max(Math.round((val / maxTotal) * height), 2);
+        return `
+          <div style="height:${segHeight}px; background:${colorForDay[d]}; display:flex; align-items:center; justify-content:center; color:${textColorForDay[d]}; font-size:11px; font-weight:700;">
+            ${segHeight >= 18 ? val : ''}
+          </div>
+        `;
+      }).join('');
+      return `
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; align-items:center;">
+          <div style="width:100%; height:${height}px; position:relative;">
+            <div style="position:absolute; bottom:0; left:0; right:0; height:${barPixelHeight}px; display:flex; flex-direction:column; justify-content:flex-end; border-radius:6px 6px 0 0; overflow:hidden;">
+              ${segments}
+            </div>
+          </div>
+          <div style="width:100%; border-top:1px solid #D9D3C4;"></div>
+          <div style="font-size:11px; font-weight:700; color:#241C10; margin-top:6px; text-align:center; width:100%; word-break:break-word;">${escapeHtml(h.hubName)}</div>
+          <div style="font-size:13px; font-weight:400; color:#241C10; margin-top:2px;">${total}</div>
+        </div>
+      `;
+    }).join('');
+
+    return `<div style="display:flex; align-items:flex-start; gap:8px;">${bars}</div>`;
+  }
+
+  function verticalStackedBarLegendByDate(hubs, dailyRows) {
+    const allDays = sortedSaleDays(dailyRows);
+    const colorForDay = {};
+    allDays.forEach((d, i) => { colorForDay[d] = REPORT_MONO_PALETTE[i % REPORT_MONO_PALETTE.length]; });
+    const totalForDay = {};
+    allDays.forEach(d => {
+      totalForDay[d] = dailyRows.reduce((s, r) => s + (r.day === d ? r.count : 0), 0);
+    });
+
+    return `
+      <div style="font-size:11px; font-weight:700; letter-spacing:0.4px; color:#756c5a; margin-bottom:10px;">DATE</div>
+      ${allDays.map(d => `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+          <span style="display:inline-block; width:16px; height:16px; border-radius:4px; background:${colorForDay[d]}; flex-shrink:0;"></span>
+          <div>
+            <div style="font-size:13px; font-weight:700; color:#241C10;">${escapeHtml(formatSaleDay(d))}</div>
+            <div style="font-size:12px; color:#756c5a;">${totalForDay[d]}</div>
           </div>
         </div>
       `).join('')}
