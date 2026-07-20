@@ -331,6 +331,23 @@
     let currentDeviceIndex = -1;
     const idPrefix = videoEl.id ? videoEl.id.replace('Video', '') : '';
 
+    // Detect if device is older or lower-spec
+    const isLowSpec = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
+                      (navigator.deviceMemory && navigator.deviceMemory <= 3) ||
+                      (/Chrome\/([0-9]+)/.test(navigator.userAgent) && parseInt(RegExp.$1, 10) < 65);
+
+    // Dynamic stream configuration
+    const videoConstraints = isLowSpec ? {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      frameRate: { ideal: 12, max: 15 }
+    } : {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    };
+
     function setStatus(msg, warn) {
       if (!statusEl) return;
       statusEl.textContent = msg;
@@ -348,15 +365,7 @@
         return;
       }
       try {
-        // Request lower resolution and a lower target frame rate to allow the sensor to increase exposure time
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 12, max: 15 }
-          }
-        });
+        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
         videoEl.srcObject = stream;
         await videoEl.play();
         setStatus('');
@@ -434,16 +443,20 @@
         stream.getTracks().forEach(t => t.stop());
       }
 
+      const switchConstraints = isLowSpec ? {
+        deviceId: { exact: device.deviceId },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 12, max: 15 }
+      } : {
+        deviceId: { exact: device.deviceId },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      };
+
       try {
         setStatus('Switching camera…');
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            deviceId: { exact: device.deviceId },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 12, max: 15 }
-          }
-        });
+        stream = await navigator.mediaDevices.getUserMedia({ video: switchConstraints });
         videoEl.srcObject = stream;
         await videoEl.play();
         setStatus('');
@@ -451,13 +464,15 @@
         console.error('Failed to switch camera:', err);
         setStatus('Failed to switch camera. Retrying...', true);
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 12, max: 15 }
-            }
-          });
+          const fallbackConstraints = isLowSpec ? {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 12, max: 15 }
+          } : {
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          };
+          stream = await navigator.mediaDevices.getUserMedia({ video: fallbackConstraints });
           videoEl.srcObject = stream;
           await videoEl.play();
           setStatus('');
@@ -471,8 +486,8 @@
     function loop() {
       if (stopped) return;
       if (!paused && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-        // Downscale frame to maximum 240px width or height to minimize CPU processing overhead
-        const maxDim = 240;
+        // Downscale dynamically based on device specs
+        const maxDim = isLowSpec ? 240 : 480;
         let w = videoEl.videoWidth;
         let h = videoEl.videoHeight;
         if (w > maxDim || h > maxDim) {
@@ -516,8 +531,8 @@
           } catch (e) {}
         }, 0);
       }
-      // Run loop every 300ms (approx 3 scans per second) to keep preview silky smooth
-      setTimeout(loop, 300);
+      // Modern: 120ms (8 Hz), Low-spec: 300ms (3.3 Hz)
+      setTimeout(loop, isLowSpec ? 300 : 120);
     }
 
     function stop() {
