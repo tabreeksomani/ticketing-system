@@ -76,7 +76,7 @@
      collapse the camera feed to zero height. Video is absolutely positioned to
      fill that reserved box. */
   .scanner-video-wrap { position: relative; width: 100%; height: 0; padding-top: 75%; background: #000; overflow: hidden; }
-  .scanner-video-wrap video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .scanner-video-wrap video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; transform: translate3d(0,0,0); will-change: transform; backface-visibility: hidden; }
   /* padding-bottom:62% makes the frame square (its height matches its 62% width,
      both measured against the parent) without `aspect-ratio`. */
   .scan-frame { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 62%; height: 0; padding-bottom: 62%; border: 3px solid rgba(140,115,76,0.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0,0,0,0.35); pointer-events: none; }
@@ -423,8 +423,8 @@
     function loop() {
       if (stopped) return;
       if (!paused && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-        // Downscale frame to maximum 320px width or height to minimize CPU processing overhead
-        const maxDim = 320;
+        // Downscale frame to maximum 240px width or height to minimize CPU processing overhead
+        const maxDim = 240;
         let w = videoEl.videoWidth;
         let h = videoEl.videoHeight;
         if (w > maxDim || h > maxDim) {
@@ -439,33 +439,37 @@
         canvas.width = w;
         canvas.height = h;
         ctx.drawImage(videoEl, 0, 0, w, h);
-        try {
-          const imageData = ctx.getImageData(0, 0, w, h);
-          const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-          if (result && result.data) {
-            const now = Date.now();
-            if (!recent.has(result.data) || now - recent.get(result.data) > 2000) {
-              recent.set(result.data, now);
-              if (frameEl) {
-                frameEl.classList.add('flash');
-                setTimeout(() => {
-                  if (stopped) return;
-                  paused = true;
-                  videoEl.pause();
-                }, 500);
-                setTimeout(() => {
-                  frameEl.classList.remove('flash');
-                  paused = false;
-                  if (!stopped) videoEl.play().catch(() => {});
-                }, 1000);
+
+        // Defer readback to yield execution and prevent WebRTC GPU-to-CPU pipeline stalls
+        setTimeout(() => {
+          try {
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+            if (result && result.data) {
+              const now = Date.now();
+              if (!recent.has(result.data) || now - recent.get(result.data) > 2000) {
+                recent.set(result.data, now);
+                if (frameEl) {
+                  frameEl.classList.add('flash');
+                  setTimeout(() => {
+                    if (stopped) return;
+                    paused = true;
+                    videoEl.pause();
+                  }, 500);
+                  setTimeout(() => {
+                    frameEl.classList.remove('flash');
+                    paused = false;
+                    if (!stopped) videoEl.play().catch(() => {});
+                  }, 1000);
+                }
+                onDecode(result.data);
               }
-              onDecode(result.data);
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }, 0);
       }
-      // Run loop 4 times a second (250ms interval) to save CPU and battery on old tablets
-      setTimeout(loop, 250);
+      // Run loop every 300ms (approx 3 scans per second) to keep preview silky smooth
+      setTimeout(loop, 300);
     }
 
     function stop() {
