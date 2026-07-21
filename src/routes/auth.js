@@ -66,6 +66,10 @@ router.post('/login', asyncHandler(async (req, res) => {
 const APP_ROLES = {
   ticketing: ['volunteer'],
   checkins: ['volunteer'],
+  // The check-in app's Premium Lounge and VCC tabs each get their own login
+  // picker, scoped to that tab's role, mirroring the Hub tab's 'checkins'.
+  checkins_central: ['central'],
+  checkins_venue: ['venue'],
   admin: ['admin'],
   parking: ['parking_dashboard', 'parking_marshal', 'parking_admin'],
 };
