@@ -104,6 +104,51 @@
     return rest || '0';
   }
 
+  // A demo'ers device gets one random prefix, generated the first time it's
+  // needed and kept in localStorage so it stays stable for this browser but
+  // distinct from every other demo'ers. It lets demo'ers exercise the scan flow
+  // with codes that can't collide with each other or with real ticket numbers.
+  // The trailing "-" just separates the prefix from the ticket number.
+  function demoPrefix() {
+    let p = localStorage.getItem('demo_prefix');
+    if (!p) {
+      const bytes = crypto.getRandomValues(new Uint8Array(4));
+      p = 'T' + Array.from(bytes, (b) => ('0' + b.toString(16)).slice(-2)).join('') + '-';
+      localStorage.setItem('demo_prefix', p);
+    }
+    return p;
+  }
+
+  // Turns a raw scanned/typed code into its canonical form - the single value
+  // that's held in state, sent to the backend, and displayed. Strips the
+  // "MQEBC" prefix and zero padding (e.g. "MQEBC00042" -> "42") via
+  // formatTicketCode; anything without that prefix is passed through verbatim.
+  //
+  // For demo'ers it also prepends a browser-specific prefix, isolating their
+  // test tickets. The server stores/returns that prefixed code untouched, so
+  // it's already canonical everywhere downstream.
+  //
+  // IMPORTANT: call this exactly once, at the input boundary (scan/manual
+  // entry). Everything after - state, scan log, API responses - already holds
+  // the canonical code, so re-running it would double the demo prefix (e.g.
+  // "T6cbbd3a0-T6cbbd3a0-0"). Render those codes with formatTicketCode, which
+  // leaves an already-canonical code untouched.
+  function canonicalizeCode(code, user) {
+    if (typeof code !== 'string') return code;
+    const bare = formatTicketCode(code);
+    if (isDemoLogin(user)) return demoPrefix() + bare;
+    return bare;
+  }
+
+  // A login id is unique across all roles, so the per-tab demo logins can't all
+  // be named "demo" - the convention is "demo" for the Hub (volunteer) tab and
+  // an id prefixed with "demo" (e.g. "demo-central", "demo-venue") for the
+  // Premium Lounge and VCC tabs. Match any of them so the scan flow gets the
+  // isolating prefix on whichever tab a demo'er is signed into.
+  function isDemoLogin(user) {
+    return !!(user && typeof user.id === 'string' && user.id.startsWith('demo'));
+  }
+
   const ICON_PATHS = {
     arrowRight: '<path d="M5 12h14M13 6l6 6-6 6"/>',
     arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
@@ -1072,7 +1117,7 @@
       showScanResultFlash('hubBoard', false, 'Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code);
+    code = canonicalizeCode(code, hubUser);
     try {
       const updated = await api(hubToken, `/trips/${hubActiveTripId}/board`, { method: 'POST', body: JSON.stringify({ code }) });
       hubTrips = hubTrips.map(t => (t.id === hubActiveTripId ? updated : t));
@@ -1135,9 +1180,13 @@
     renderCentralCurrentTab();
   }
 
-  function renderCentralLogin() {
+  async function renderCentralLogin() {
+    let logins = [];
+    try { logins = await api(null, '/auth/login-ids?app=checkins_central'); } catch (e) { /* form still renders */ }
     document.getElementById('roleArea').innerHTML = `
       <div class="card login-card">
+        <label>Login</label>
+        <select id="centralLoginSelect">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.id)}</option>`).join('')}</select>
         <label>Password</label>
         <input id="centralLoginPass" type="password" />
         <button class="btn btn-primary" id="centralLoginBtn">Sign in</button>
@@ -1145,9 +1194,10 @@
     `;
     document.getElementById('centralLoginBtn').onclick = async () => {
       unlockAudio();
+      const id = document.getElementById('centralLoginSelect').value;
       const secret = document.getElementById('centralLoginPass').value;
       try {
-        const data = await api(null, '/auth/login', { method: 'POST', body: JSON.stringify({ id: 'central', secret }) });
+        const data = await api(null, '/auth/login', { method: 'POST', body: JSON.stringify({ id, secret }) });
         centralToken = data.token; centralUser = data.user;
         localStorage.setItem('central_token', centralToken);
         localStorage.setItem('central_user', JSON.stringify(centralUser));
@@ -1429,7 +1479,7 @@
       showScanResultFlash('centralBoard', false, 'Not a valid ticket code');
       return;
     }
-    code = formatTicketCode(code);
+    code = canonicalizeCode(code, centralUser);
     try {
       const body = { code };
       if (standbyHubId) body.standbyHubId = standbyHubId;
@@ -1581,9 +1631,13 @@
     renderVenueArriveTab();
   }
 
-  function renderVenueLogin() {
+  async function renderVenueLogin() {
+    let logins = [];
+    try { logins = await api(null, '/auth/login-ids?app=checkins_venue'); } catch (e) { /* form still renders */ }
     document.getElementById('roleArea').innerHTML = `
       <div class="card login-card">
+        <label>Login</label>
+        <select id="venueLoginSelect">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.id)}</option>`).join('')}</select>
         <label>Password</label>
         <input id="venueLoginPass" type="password" />
         <button class="btn btn-primary" id="venueLoginBtn">Sign in</button>
@@ -1591,9 +1645,10 @@
     `;
     document.getElementById('venueLoginBtn').onclick = async () => {
       unlockAudio();
+      const id = document.getElementById('venueLoginSelect').value;
       const secret = document.getElementById('venueLoginPass').value;
       try {
-        const data = await api(null, '/auth/login', { method: 'POST', body: JSON.stringify({ id: 'venue', secret }) });
+        const data = await api(null, '/auth/login', { method: 'POST', body: JSON.stringify({ id, secret }) });
         venueToken = data.token; venueUser = data.user;
         localStorage.setItem('venue_token', venueToken);
         localStorage.setItem('venue_user', JSON.stringify(venueUser));
