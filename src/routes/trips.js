@@ -194,6 +194,11 @@ router.get('/trips', asyncHandler(async (req, res) => {
     // bounded to a few hours so this doesn't grow unbounded over a
     // multi-day event.
     sql += ` AND (bt.status = 'departed' OR (bt.status = 'arrived' AND bt.arrived_at > now() - interval '4 hours'))`;
+    // Once a plate has a newer trip (any leg - e.g. VCC sending an arrived
+    // bus straight back to Premium Lounge), the older arrived card here is
+    // stale: that bus has already moved on, so it shouldn't keep sitting in
+    // this list with a now-meaningless action still available on it.
+    sql += ` AND NOT EXISTS (SELECT 1 FROM bus_trips newer WHERE newer.license_plate = bt.license_plate AND newer.id > bt.id)`;
   }
 
   // Departures (side=origin): newest trip first, so whichever trip is
