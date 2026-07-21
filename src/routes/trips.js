@@ -34,16 +34,19 @@ const router = express.Router();
 const LEGS = {
   O1: { originRole: 'volunteer', destination: 'variable', arrivalRole: 'variable', tripCol: 'trip1', allowStandbyCreate: true, standbyHubSource: 'origin' },
   O2: { originRole: 'central', destination: 'venue', arrivalRole: 'venue', tripCol: 'trip2', allowStandbyCreate: true, standbyHubSource: 'explicit' },
-  R1: { originRole: 'venue', destination: 'central', arrivalRole: 'central', tripCol: 'trip3' },
+  R1: { originRole: 'venue', destination: 'variable', arrivalRole: 'variable', tripCol: 'trip3' },
   R2: { originRole: 'central', destination: 'dynamic-hub', arrivalRole: 'volunteer', tripCol: 'trip4', validateHomeHub: true, allowStandbyCreate: true, standbyHubSource: 'destination' },
 };
 
-// Only O1 has a variable destination right now - resolves which role must
-// mark a given O1 trip arrived, based on that specific trip's destination
-// rather than a single fixed value for the whole leg.
+// O1 and R1 both have a variable destination (an admin can send an empty
+// bus straight to a hub instead of the usual Central/VCC) - resolves which
+// role must mark a given trip arrived, based on that specific trip's own
+// destination rather than a single fixed value for the whole leg.
 function resolveArrivalRole(trip, config) {
-  if (trip.leg === 'O1') return trip.destination === 'venue' ? 'venue' : 'central';
-  return config.arrivalRole;
+  if (config.arrivalRole !== 'variable') return config.arrivalRole;
+  if (trip.destination === 'venue') return 'venue';
+  if (trip.destination === 'central') return 'central';
+  return 'volunteer';
 }
 
 function legConfig(leg) {
@@ -144,15 +147,24 @@ router.get('/trips', asyncHandler(async (req, res) => {
       sql += ` AND bt.origin = $${params.length}`;
     }
   } else {
-    if (leg === 'O1') {
-      // O1's arrival role depends on each trip's own destination (central
-      // or venue/VCC), not one fixed role for the whole leg - so both
-      // central and venue callers can list O1 arrivals, each scoped to only
-      // the trips actually headed their way.
+    if (config.arrivalRole === 'variable') {
+      // O1 and R1's arrival role depends on each trip's own destination
+      // (Central, VCC, or - for an admin-repositioned empty bus - a real
+      // hub), not one fixed role for the whole leg. Central/venue callers
+      // are scoped to their own fixed destination; a volunteer is scoped to
+      // whichever of their own hubs they ask about, same as the dedicated
+      // volunteer-arrival branch below.
       if (user.role === 'admin') {
         // no extra scope - admin sees all
       } else if (user.role === 'central' || user.role === 'venue') {
         params.push(user.role === 'central' ? 'central' : 'venue');
+        sql += ` AND bt.destination = $${params.length}`;
+      } else if (user.role === 'volunteer') {
+        const destination = req.query.destination;
+        if (!destination || !user.hubIds.includes(destination)) {
+          jsonError('destination must be one of your hubs', 403);
+        }
+        params.push(destination);
         sql += ` AND bt.destination = $${params.length}`;
       } else {
         jsonError('Not authorized for this leg', 403);
@@ -226,6 +238,15 @@ router.post('/trips', asyncHandler(async (req, res) => {
     if (user.role === 'volunteer' && !user.hubIds.includes(origin)) {
       jsonError('origin must be one of your hubs', 403);
     }
+    // Opened/closed are both guards around trip creation (see
+    // src/routes/hubs.js): must be opened first, and not yet closed.
+    const { rows: hubRows } = await pool.query('SELECT opened_at, closed_at FROM hubs WHERE id = $1', [origin]);
+    if (hubRows[0] && hubRows[0].closed_at) {
+      jsonError('This hub is closed - no new trips can be created here', 409);
+    }
+    if (!hubRows[0] || !hubRows[0].opened_at) {
+      jsonError('This hub has not been opened yet - open it before creating a trip', 409);
+    }
   } else {
     origin = leg === 'O2' || leg === 'R2' ? 'central' : 'venue';
   }
@@ -239,18 +260,29 @@ router.post('/trips', asyncHandler(async (req, res) => {
   } else if (config.destination === 'variable') {
     destination = String(req.body.destination || 'central').trim();
     if (!['central', 'venue'].includes(destination)) {
-      jsonError('destination must be central or venue', 400);
+      // Not one of the two fixed locations - only other valid option is a
+      // real hub (an admin repositioning an empty bus straight to a hub,
+      // bypassing Central/VCC entirely).
+      const { rows: hubRows } = await pool.query('SELECT id FROM hubs WHERE id = $1', [destination]);
+      if (!hubRows.length) jsonError('destination must be central, venue, or a valid hub', 400);
     }
   } else {
     destination = config.destination;
   }
 
+  // An empty bus being repositioned (admin's Move Bus, or VCC sending an
+  // arrived bus straight back to Premium Lounge) has no riders to board -
+  // go straight to "en route" instead of sitting in the scheduled/boarding
+  // queue waiting for a passenger that will never come. Only admin or this
+  // leg's own legitimate operator can skip boarding this way.
+  const startDeparted = (user.role === 'admin' || user.role === config.originRole) && req.body.immediate === true;
+
   let rows;
   try {
     ({ rows } = await pool.query(
-      `INSERT INTO bus_trips (license_plate, origin, destination, leg, status, created_by)
-       VALUES ($1, $2, $3, $4, 'scheduled', $5) RETURNING *`,
-      [licensePlate, origin, destination, leg, user.id]
+      `INSERT INTO bus_trips (license_plate, origin, destination, leg, status, created_by, departed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [licensePlate, origin, destination, leg, startDeparted ? 'departed' : 'scheduled', user.id, startDeparted ? new Date() : null]
     ));
   } catch (e) {
     // Unique violation on bus_trips_active_plate (migrations/003) - this
@@ -275,14 +307,35 @@ router.post('/trips/:id(\\d+)/board', asyncHandler(async (req, res) => {
     jsonError('This trip has already departed', 409);
   }
 
-  const code = normalizeCode(req.body.code);
-  if (code === '') jsonError('code is required', 400);
+  // Virtual ticket: nobody has any code at all to scan or type (not even a
+  // lost physical ticket) - generate one from a dedicated sequence instead,
+  // starting at 9000 so it's obviously out of range of real event codes and
+  // never collides with one.
+  const isVirtual = req.body.virtual === true;
+  if (isVirtual && !config.allowStandbyCreate) {
+    jsonError('Virtual tickets are not supported on this leg', 400);
+  }
+
+  let code;
+  if (isVirtual) {
+    const { rows: seqRows } = await pool.query("SELECT nextval('virtual_ticket_code_seq') AS n");
+    code = String(seqRows[0].n);
+  } else {
+    code = normalizeCode(req.body.code);
+    if (code === '') jsonError('code is required', 400);
+  }
 
   const { rows } = await pool.query(
     `SELECT t.*, h.name AS hub_name FROM tickets t JOIN hubs h ON h.id = t.hub_id WHERE t.code = $1`,
     [code]
   );
   let ticket = rows[0];
+
+  if (isVirtual && ticket) {
+    // Should be practically impossible (the sequence's range is reserved),
+    // but never silently board someone else's real ticket over this.
+    jsonError('Virtual ticket code collision - try again', 409);
+  }
 
   let isNewStandby = false;
   if (!ticket) {
@@ -325,8 +378,26 @@ router.post('/trips/:id(\\d+)/board', asyncHandler(async (req, res) => {
 
   // Anti-rescan: scoped to this leg's own column only - a ticket can be on
   // at most one trip per leg, but boarding one leg has no effect on another.
+  // Exception: if their current bus for this leg hasn't departed yet, this
+  // scan is treated as a bus switch rather than a duplicate - clears the old
+  // trip's boarding and boards them here instead (nothing extra to update on
+  // the old trip's row itself; its onboard count is a live COUNT(*), so it
+  // drops automatically once this ticket's id column points elsewhere).
+  // Once their current bus has already departed, that's no longer safe to
+  // silently reverse - that needs a real Undo Scan or admin correction.
+  let switchedFromTripId = null;
   if (ticket[idCol] !== null) {
-    jsonError('This ticket has already been scanned for this leg and cannot be scanned again', 409);
+    if (ticket[idCol] === tripId) {
+      jsonError('This ticket has already been scanned onto this trip', 409);
+    }
+    const currentTrip = await fetchTrip(ticket[idCol]);
+    if (!currentTrip) {
+      jsonError('This ticket has already been scanned for this leg and cannot be scanned again', 409);
+    }
+    if (currentTrip.status === 'departed' || currentTrip.status === 'arrived') {
+      jsonError('This ticket has already departed on a different bus and cannot be scanned again', 409);
+    }
+    switchedFromTripId = currentTrip.id;
   }
 
   // R2 only: the ticket's home hub doesn't match this bus's destination -
@@ -348,6 +419,8 @@ router.post('/trips/:id(\\d+)/board', asyncHandler(async (req, res) => {
 
   const result = tripRow(await fetchTrip(tripId));
   result.issuedStandby = isNewStandby;
+  if (isVirtual) result.virtualCode = code;
+  if (switchedFromTripId) result.switchedFromTrip = switchedFromTripId;
   // O2 passive display only (§8.1): shows when this rider arrived at Central
   // via O1, so a volunteer can visually catch someone boarding out of order.
   // Purely informational - never blocks the scan.
@@ -471,13 +544,15 @@ router.post('/trips/:id(\\d+)/undo-depart', asyncHandler(async (req, res) => {
 }));
 
 // Fixes a genuine mistake (wrong license plate typo, wrong leg/hub picked,
-// duplicate "New Trip" tap) before anyone's boarded - not admin-only, since
-// whoever's authorized to create/board this trip in the first place is the
-// one who'd make and notice this kind of mistake, and waiting on admin for a
-// typo isn't operationally realistic in the field. Gated to onboard === 0
-// (equivalently: still 'scheduled', since a trip can't reach 'boarding'
-// without at least one rider on it) - once someone's boarded, this has to go
-// through a real depart/arrive/undo flow instead, not a delete.
+// duplicate "New Trip" tap) - not admin-only, since whoever's authorized to
+// create/board this trip in the first place is the one who'd make and
+// notice this kind of mistake, and waiting on admin for a typo isn't
+// operationally realistic in the field. Self-service is limited to
+// onboard === 0 though (nobody's boarded yet); deleting a trip that already
+// has real riders on it is an admin-only escalation (see below), since
+// that's a bigger call than fixing your own mistake. Either way, only valid
+// before the trip departs - once it's left, this has to go through a real
+// depart/arrive/undo flow instead, not a delete.
 router.delete('/trips/:id(\\d+)', asyncHandler(async (req, res) => {
   const user = await requireAuth(req);
   const tripId = parseInt(req.params.id, 10);
@@ -486,8 +561,23 @@ router.delete('/trips/:id(\\d+)', asyncHandler(async (req, res) => {
   const config = legConfig(trip.leg);
   requireOriginAccess(user, trip, config);
 
+  if (trip.status === 'departed' || trip.status === 'arrived') {
+    jsonError('Cannot delete a trip that has already departed', 409);
+  }
+
   if (trip.onboard > 0) {
-    jsonError('Cannot delete a trip that already has riders boarded', 409);
+    // Self-service (Hub/Central) still can't delete a trip with real riders
+    // on it - that's reserved for admin, since it's a bigger call than
+    // fixing your own typo. Admin force-deleting un-boards everyone first
+    // (clears trip{n}_id/trip{n}_boarded_at) so they're free to be rescanned
+    // onto a different bus, rather than the trip row just vanishing out
+    // from under them.
+    if (user.role !== 'admin') {
+      jsonError('Cannot delete a trip that already has riders boarded', 409);
+    }
+    const idCol = `${config.tripCol}_id`;
+    const atCol = `${config.tripCol}_boarded_at`;
+    await pool.query(`UPDATE tickets SET ${idCol} = NULL, ${atCol} = NULL WHERE ${idCol} = $1`, [tripId]);
   }
 
   await pool.query('DELETE FROM bus_trips WHERE id = $1', [tripId]);
@@ -543,15 +633,17 @@ router.post('/trips/:id(\\d+)/undo-arrive', asyncHandler(async (req, res) => {
   res.json(tripRow(await fetchTrip(tripId)));
 }));
 
-// Admin-only: fix a mis-picked destination before anyone boards. Only O1 and
-// R2 have a destination worth changing - O1 because it's genuinely variable
-// (Central vs VCC), R2 because it's picked by hand from the hub list and a
-// volunteer can fat-finger the wrong one. O2/R1 have a single fixed
-// destination for the whole leg, so there's nothing to change. Gated to
-// 'scheduled' (no one boarded yet) rather than just checking onboard === 0,
-// since once boarding starts each ticket is already tied to this trip's
-// destination for downstream routing (e.g. R2 standby hub attribution) -
-// changing it out from under boarded riders would silently mis-route them.
+// Admin-only: fix a mis-picked destination any time before the trip
+// arrives. Only O1 and R2 have a destination worth changing - O1 because
+// it's genuinely variable (Central vs VCC), R2 because it's picked by hand
+// from the hub list and a volunteer can fat-finger the wrong one. O2/R1
+// have a single fixed destination for the whole leg, so there's nothing to
+// change. Allowed through 'departed' (not just 'scheduled') - a rider
+// already boarded keeps whatever hub_id/arrival-role was resolved at their
+// own board time, so correcting the trip's destination afterward doesn't
+// silently mis-route anyone already on it; it only changes how *new* boards
+// and the eventual arrival are handled, which is exactly the point of
+// fixing a mislabeled bus. Once it's 'arrived', there's nothing left to fix.
 router.post('/trips/:id(\\d+)/destination', asyncHandler(async (req, res) => {
   await requireRole(req, ['admin']);
   const tripId = parseInt(req.params.id, 10);
@@ -561,8 +653,8 @@ router.post('/trips/:id(\\d+)/destination', asyncHandler(async (req, res) => {
   if (trip.leg !== 'O1' && trip.leg !== 'R2') {
     jsonError('Destination can only be changed for O1 or R2 trips', 400);
   }
-  if (trip.status !== 'scheduled') {
-    jsonError('Destination can only be changed before anyone boards', 409);
+  if (trip.status === 'arrived') {
+    jsonError('Destination can only be changed before the trip has arrived', 409);
   }
 
   const destination = String(req.body.destination || '').trim();

@@ -262,49 +262,132 @@ router.get('/dashboard/trip/:id/breakdown', asyncHandler(async (req, res) => {
   })));
 }));
 
+// Live onboard count for any leg, from tickets' own trip{n}_id columns -
+// same pattern used throughout trips.js/dashboard.js, repeated here since
+// this endpoint (unlike the others) spans all four legs at once.
+const TRANSPORT_ONBOARD_CASE = `(CASE bt.leg
+  WHEN 'O1' THEN (SELECT COUNT(*) FROM tickets tk WHERE tk.trip1_id = bt.id)
+  WHEN 'O2' THEN (SELECT COUNT(*) FROM tickets tk WHERE tk.trip2_id = bt.id)
+  WHEN 'R1' THEN (SELECT COUNT(*) FROM tickets tk WHERE tk.trip3_id = bt.id)
+  WHEN 'R2' THEN (SELECT COUNT(*) FROM tickets tk WHERE tk.trip4_id = bt.id)
+END)::int`;
+
+// Purely inferred from leg/status/destination - there's no real location
+// tracking anywhere in this system. R2 deliberately has no "arrived" state:
+// nobody at a hub confirms a returning bus made it home (removed earlier),
+// so the most specific thing this can ever say for a departed R2 trip is
+// "en route to {hub}," never "arrived."
+function transportLocationLabel(row, hubNameById) {
+  const destName = row.destination === 'central' ? 'Premium Lounge'
+    : row.destination === 'venue' ? 'VCC'
+    : (hubNameById[row.destination] || row.destination);
+  if (row.status === 'scheduled' || row.status === 'boarding') {
+    const originName = row.origin === 'central' ? 'Premium Lounge'
+      : row.origin === 'venue' ? 'VCC'
+      : (hubNameById[row.origin] || row.origin);
+    return `Waiting at ${originName}`;
+  }
+  if (row.status === 'departed') return `En route to ${destName}`;
+  if (row.status === 'arrived') return `At ${destName}`;
+  return 'Unknown';
+}
+
 router.get('/dashboard/transport', asyncHandler(async (req, res) => {
   await requireRole(req, ['admin']);
-  const { rows } = await pool.query(
-    `SELECT b.*, h.name AS hub_name,
-            (SELECT COUNT(*) FROM tickets tk WHERE tk.leg1_bus_id = b.id)::int AS onboard,
-            (SELECT COUNT(*) FROM tickets tk WHERE tk.leg1_bus_id = b.id AND tk.is_standby = TRUE)::int AS standby_onboard
-     FROM buses b JOIN hubs h ON b.hub_id = h.id
-     WHERE b.leg = 'hub_to_central'
-     ORDER BY h.name ASC, b.id ASC`
+
+  const { rows: hubRows } = await pool.query('SELECT id, name, opened_at, closed_at FROM hubs ORDER BY name ASC');
+  const hubNameById = {};
+  hubRows.forEach((h) => { hubNameById[h.id] = h.name; });
+
+  const { rows: activeRows } = await pool.query(
+    `SELECT bt.*, ${TRANSPORT_ONBOARD_CASE} AS onboard
+     FROM bus_trips bt
+     WHERE bt.status != 'arrived'
+     ORDER BY bt.created_at DESC`
   );
 
-  const grouped = { scheduled: [], boarding: [], departed: [], arrived: [] };
-  for (const r of rows) {
-    const entry = {
-      id: r.id,
-      hubId: r.hub_id,
-      hubName: r.hub_name,
-      label: r.label,
-      capacity: r.capacity,
-      onboard: r.onboard,
-      standbyOnboard: r.standby_onboard,
-      boardingStartedAt: r.boarding_started_at,
-      departedAt: r.departed_at,
-      arrivedAt: r.arrived_at,
-    };
-    if (grouped[r.status]) {
-      grouped[r.status].push(entry);
+  const plateCounts = {};
+  activeRows.forEach((r) => { plateCounts[r.license_plate] = (plateCounts[r.license_plate] || 0) + 1; });
+
+  const active = activeRows.map((r) => ({
+    tripId: r.id,
+    leg: r.leg,
+    licensePlate: r.license_plate,
+    origin: r.origin,
+    destination: r.destination,
+    status: r.status,
+    onboard: r.onboard,
+    createdAt: r.created_at,
+    boardingStartedAt: r.boarding_started_at,
+    departedAt: r.departed_at,
+    locationLabel: transportLocationLabel(r, hubNameById),
+    samePlateActive: plateCounts[r.license_plate] > 1,
+  }));
+
+  // History: every trip that's actually finished one way or another
+  // (departed or arrived) - 'scheduled'/'boarding' trips aren't "completed"
+  // yet, they're in the active list above. Deliberately unconditioned (no
+  // leg/hub/date filtering server-side) - the History tab's own filters are
+  // applied client-side instead, since this same array also feeds the Live
+  // tab's "arrived" buckets and the By-Plate tab's per-plate current state.
+  // Filtering it server-side per-request used to mean picking a filter on
+  // the History tab could silently change what Live/By-Plate showed too.
+  const { rows: historyRows } = await pool.query(
+    `SELECT bt.*, ${TRANSPORT_ONBOARD_CASE} AS onboard
+     FROM bus_trips bt
+     WHERE bt.status IN ('departed', 'arrived')
+     ORDER BY bt.created_at DESC`
+  );
+
+  const history = historyRows.map((r) => ({
+    tripId: r.id,
+    leg: r.leg,
+    licensePlate: r.license_plate,
+    origin: r.origin,
+    destination: r.destination,
+    status: r.status,
+    onboard: r.onboard,
+    createdAt: r.created_at,
+    boardingStartedAt: r.boarding_started_at,
+    departedAt: r.departed_at,
+    arrivedAt: r.arrived_at,
+  }));
+
+  // Deliberately its own unconditioned query, ignoring the leg/hubId/date
+  // filters above entirely - those only scope the `history` array for the
+  // history table. completedToday/tripSummary need to stay "today,
+  // everything" regardless of whatever the admin's currently filtering the
+  // history table to, otherwise applying a leg filter would make the
+  // trip-summary and completed-today numbers silently (and wrongly) drop
+  // to just that leg's count.
+  const { rows: todayRows } = await pool.query(
+    `SELECT bt.leg, COUNT(*)::int AS trip_count, AVG(${TRANSPORT_ONBOARD_CASE})::float AS avg_onboard
+     FROM bus_trips bt
+     WHERE bt.status IN ('departed', 'arrived')
+       AND (bt.created_at AT TIME ZONE 'America/Los_Angeles')::date = (now() AT TIME ZONE 'America/Los_Angeles')::date
+     GROUP BY bt.leg`
+  );
+  const tripSummary = { O1: { tripCount: 0, avgOnboard: 0 }, O2: { tripCount: 0, avgOnboard: 0 }, R2: { tripCount: 0, avgOnboard: 0 } };
+  todayRows.forEach((r) => {
+    if (tripSummary[r.leg]) {
+      tripSummary[r.leg] = { tripCount: r.trip_count, avgOnboard: Math.round((r.avg_onboard || 0) * 10) / 10 };
     }
-  }
+  });
+  const completedToday = todayRows.reduce((s, r) => s + r.trip_count, 0);
 
-  const { rows: standbyByHub } = await pool.query(
-    `SELECT h.id AS hub_id, h.name AS hub_name, COUNT(*)::int AS c
-     FROM tickets t JOIN hubs h ON t.hub_id = h.id
-     WHERE t.is_standby = TRUE
-     GROUP BY h.id, h.name
-     ORDER BY h.name ASC`
-  );
-  grouped.standby = {
-    total: standbyByHub.reduce((s, r) => s + r.c, 0),
-    byHub: standbyByHub.map((r) => ({ hubId: r.hub_id, hubName: r.hub_name, count: r.c })),
-  };
-
-  res.json(grouped);
+  res.json({
+    summary: {
+      totalActive: active.length,
+      boarding: active.filter((a) => a.status === 'boarding' || a.status === 'scheduled').length,
+      departed: active.filter((a) => a.status === 'departed').length,
+      totalOnboard: active.reduce((s, a) => s + a.onboard, 0),
+      completedToday,
+    },
+    hubs: hubRows.map((h) => ({ id: h.id, name: h.name, openedAt: h.opened_at, closedAt: h.closed_at })),
+    tripSummary,
+    active,
+    history,
+  });
 }));
 
 module.exports = router;

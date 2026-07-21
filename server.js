@@ -60,6 +60,7 @@ app.use('/api', require('./src/routes/trips'));
 app.use('/api', require('./src/routes/tickets'));
 app.use('/api', require('./src/routes/dashboard'));
 app.use('/api', require('./src/routes/parking'));
+app.use('/api', require('./src/routes/incidents'));
 
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not found' });

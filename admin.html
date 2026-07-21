@@ -75,6 +75,8 @@
   .status-boarding { background: #FEF3C7; color: #92400E; }
   .status-departed { background: #F3ECDD; color: #6b5636; }
   .status-arrived { background: #DCFCE7; color: #166534; }
+  .tab-badge { display: inline-block; min-width: 16px; padding: 1px 6px; border-radius: 9px; background: #DC2626; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; vertical-align: middle; }
+  .has-incident { border-left-color: #DC2626 !important; background: #FEF2F2 !important; }
   .trip-mini-card { background: #FFFFFF; border: 1px solid #E8E1D3; border-left: 4px solid #8C734C; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
   .trip-mini-card.dest-venue { border-left-color: #2563EB; }
   .trip-mini-card.dest-central { border-left-color: #8C734C; }
@@ -111,6 +113,17 @@
   let expandedEgressTrips = new Set();
   let egressTripBreakdowns = {}; // tripId -> array, cached once fetched
   let openTripMenu = null; // tripId of the one trip-card 3-dot menu currently open, or null
+  let transportData = null;
+  let transportSearch = ''; // plate filter, applied client-side to both the location board and history
+  let transportHistoryFilters = { leg: '', hubId: '', date: '' }; // sent to the server, refetched on change
+  let transportHistorySort = { column: 'createdAt', direction: 'desc' };
+  let expandedTransportPlates = new Set();
+  let expandedTransportGroups = new Set(); // locationLabel strings currently expanded to show their bus cards
+  // Per-column filters on the All Vehicles table - each '' means "no filter".
+  let transportPlateFilters = { status: '', at: '', departedFrom: '', arrivingAt: '' };
+  let transportSubTab = 'live'; // 'live' | 'byPlate' | 'history'
+  let incidentsData = [];
+  let openIncidentPlates = new Set(); // license plates with a currently-open incident
 
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -434,7 +447,7 @@
     let optionsHtml;
     if (trip.leg === 'O1') {
       optionsHtml = `
-        <option value="central" ${trip.destination === 'central' ? 'selected' : ''}>Central</option>
+        <option value="central" ${trip.destination === 'central' ? 'selected' : ''}>Premium Lounge</option>
         <option value="venue" ${trip.destination === 'venue' ? 'selected' : ''}>VCC</option>
       `;
     } else {
@@ -466,6 +479,21 @@
     };
   }
 
+  // Same normalization checkin.html applies to every license plate input
+  // (all caps, letters/digits only) so a plate typed here always matches
+  // what a volunteer scans/types at check-in.
+  function wireLicensePlateInput(inputId) {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const pos = el.selectionStart;
+      const before = el.value.length;
+      el.value = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const after = el.value.length;
+      if (pos !== null) el.setSelectionRange(pos - (before - after), pos - (before - after));
+    });
+  }
+
   function showEditPlateModal(trip, onConfirm) {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
@@ -481,6 +509,7 @@
     `;
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    wireLicensePlateInput('editPlateInput');
     const input = overlay.querySelector('#editPlateInput');
     input.focus();
     overlay.querySelector('#editPlateCancelBtn').onclick = () => overlay.remove();
@@ -489,6 +518,96 @@
       if (!licensePlate) return;
       overlay.remove();
       onConfirm(licensePlate);
+    };
+  }
+
+  function showLogIncidentModal(licensePlate, onConfirm) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:320px;width:100%;margin:0;">
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Log incident - ${escapeHtml(licensePlate)}</div>
+        <textarea id="logIncidentDescInput" rows="3" placeholder="What happened?" style="width:100%;padding:10px;border-radius:8px;border:1px solid #D8CDB8;margin-bottom:16px;font-size:14px;box-sizing:border-box;font-family:inherit;"></textarea>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline" id="logIncidentCancelBtn" style="flex:1;">Cancel</button>
+          <button class="btn btn-primary" id="logIncidentOkBtn" style="flex:1;">Log</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    const input = overlay.querySelector('#logIncidentDescInput');
+    input.focus();
+    overlay.querySelector('#logIncidentCancelBtn').onclick = () => overlay.remove();
+    overlay.querySelector('#logIncidentOkBtn').onclick = () => {
+      const description = input.value.trim();
+      if (!description) return;
+      overlay.remove();
+      onConfirm(description);
+    };
+  }
+
+  // Dispatches an empty, already-arrived bus onward - which legs make sense
+  // depends entirely on where it physically is right now (its own
+  // destination, since it just arrived there) - the destination list is
+  // every real location (Premium Lounge, VCC, every hub) except wherever
+  // it already is. Reuses the plain POST /trips endpoint (already
+  // admin-authorized for every leg, including the otherwise-dormant R1) -
+  // no new backend route needed. Which leg tag to send is implied purely
+  // by the bus's current location, not shown to the admin.
+  async function showMoveBusModal(trip, onConfirm) {
+    const currentLocation = trip.destination; // 'central' | 'venue' | a hub id
+
+    let hubs = [];
+    try { hubs = await api('/trips/hub-headcounts'); } catch (e) { showToast(e.message); return; }
+
+    const destOptions = [];
+    if (currentLocation !== 'central') destOptions.push({ value: 'central', label: 'Premium Lounge' });
+    if (currentLocation !== 'venue') destOptions.push({ value: 'venue', label: 'VCC' });
+    hubs.forEach((h) => {
+      if (h.hubId !== currentLocation) destOptions.push({ value: h.hubId, label: h.hubName });
+    });
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:320px;width:100%;margin:0;">
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:4px;text-align:center;">Move ${escapeHtml(trip.licensePlate)}</div>
+        <div style="font-size:12px;color:#756c5a;margin-bottom:12px;text-align:center;">Currently at ${escapeHtml(prettyLocation(currentLocation))}</div>
+        <label>Destination</label>
+        <select id="moveDestSelect" style="width:100%;padding:10px;border-radius:8px;border:1px solid #D8CDB8;margin-bottom:12px;font-size:14px;">
+          ${destOptions.map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('')}
+        </select>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn btn-outline" id="moveCancelBtn" style="flex:1;">Cancel</button>
+          <button class="btn btn-primary" id="moveOkBtn" style="flex:1;">Move</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#moveCancelBtn').onclick = () => overlay.remove();
+    overlay.querySelector('#moveOkBtn').onclick = () => {
+      const destination = overlay.querySelector('#moveDestSelect').value;
+      let leg;
+      if (currentLocation === 'central') leg = destination === 'venue' ? 'O2' : 'R2';
+      else if (currentLocation === 'venue') leg = 'R1';
+      else leg = 'O1';
+
+      // Empty bus, no riders to board - go straight to en route instead of
+      // sitting in scheduled/boarding waiting for a passenger.
+      const body = { leg, licensePlate: trip.licensePlate, immediate: true };
+      if (leg === 'O1') {
+        body.origin = currentLocation;
+        body.destination = destination;
+      } else if (leg === 'R2') {
+        body.destinationHubId = destination;
+      } else if (leg === 'R1') {
+        body.destination = destination;
+      }
+      overlay.remove();
+      onConfirm(body);
     };
   }
 
@@ -550,10 +669,10 @@
 
   const TABS = [
     ['sales', 'Sales'],
-    ['ingress', 'Departing'],
-    ['egress', 'Returning'],
+    ['ingress', 'Ingress'],
+    ['egress', 'Egress'],
     ['report', 'Report'],
-    // ['transport', 'Transport Buses'],
+    ['transport', 'Buses'],
   ];
 
   function renderAppShell() {
@@ -707,7 +826,7 @@
           <h2 class="section">Hubs Overview</h2>
           <div class="table-wrap">
             <table>
-              <tr><th>Hub</th><th>Time to Central</th><th>Capacity</th><th>Allocated</th><th>Remaining</th></tr>
+              <tr><th>Hub</th><th>Time to Premium Lounge</th><th>Capacity</th><th>Allocated</th><th>Remaining</th></tr>
               ${data.map(hub => `
                 <tr>
                   <td>${escapeHtml(hub.hubName)}</td>
@@ -809,13 +928,15 @@
   // merged into one label. "Arrived" cards don't get a badge at all - they
   // only ever show up under a "Completed" heading, so repeating "Arrived"
   // on every one of them is pure noise.
-  const STATUS_LABELS = { scheduled: 'Boarding', boarding: 'Boarding', departed: 'Departed' };
+  const STATUS_LABELS = { scheduled: 'Boarding', boarding: 'Boarding', departed: 'Departed', arrived: 'Arrived' };
 
   // Location ids/literals ('surrey', 'central', 'venue') shown capitalized -
   // uses the trip's own origin/destination rather than a generic per-leg
   // label, so an O1 card reads "Surrey → Central" instead of "Hub → Central".
   function prettyLocation(id) {
     if (!id) return id;
+    if (id === 'central') return 'Premium Lounge';
+    if (id === 'venue') return 'VCC';
     return id.charAt(0).toUpperCase() + id.slice(1);
   }
 
@@ -865,11 +986,11 @@
     setTabBody(`
       <div class="stat-row">
         <div class="stat-card"><div class="stat-icon">${icon('building', 20)}</div><div class="stat-value">${data.departedHubTotal}</div><div class="stat-label">Departed Hubs (Total)</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToCentral}</div><div class="stat-label">En Route to Central</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.atCentral}</div><div class="stat-label">At Central</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToVenue}</div><div class="stat-label">En Route to Venue</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.arrivedAtVenue}</div><div class="stat-label">Arrived at Venue</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${data.avgWaitAtCentralMinutes !== null ? data.avgWaitAtCentralMinutes + 'm' : '—'}</div><div class="stat-label">Avg Wait at Central</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToCentral}</div><div class="stat-label">En Route to Premium Lounge</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.atCentral}</div><div class="stat-label">At Premium Lounge</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.enRouteToVenue}</div><div class="stat-label">En Route to VCC</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.arrivedAtVenue}</div><div class="stat-label">Arrived at VCC</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('clock', 20)}</div><div class="stat-value">${data.avgWaitAtCentralMinutes !== null ? data.avgWaitAtCentralMinutes + 'm' : '—'}</div><div class="stat-label">Avg Wait at Premium Lounge</div></div>
       </div>
 
       <div class="card">
@@ -890,15 +1011,15 @@
       </div>
 
       <div class="card">
-        <h2 class="section">Bus Trips (Hub → Central → Venue)</h2>
+        <h2 class="section">Bus Trips (Hub → Premium Lounge → VCC)</h2>
         <div style="display:flex; gap:16px; margin-bottom:14px; font-size:12px; color:#57534E;">
-          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8C734C;vertical-align:-1px;margin-right:5px;"></span>To Central</div>
-          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#2563EB;vertical-align:-1px;margin-right:5px;"></span>To Venue</div>
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8C734C;vertical-align:-1px;margin-right:5px;"></span>To Premium Lounge</div>
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#2563EB;vertical-align:-1px;margin-right:5px;"></span>To VCC</div>
         </div>
         <div class="tabs" style="margin-bottom:14px;">
           <div class="tab ${ingressLegFilter === 'all' ? 'active' : ''}" data-ingress-leg="all">All</div>
-          <div class="tab ${ingressLegFilter === 'O1' ? 'active' : ''}" data-ingress-leg="O1">To Central</div>
-          <div class="tab ${ingressLegFilter === 'O2' ? 'active' : ''}" data-ingress-leg="O2">To Venue</div>
+          <div class="tab ${ingressLegFilter === 'O1' ? 'active' : ''}" data-ingress-leg="O1">To Premium Lounge</div>
+          <div class="tab ${ingressLegFilter === 'O2' ? 'active' : ''}" data-ingress-leg="O2">To VCC</div>
         </div>
         ${ingressLegFilter !== 'O2' ? (() => {
           const allHubsSelected = data.hubs.length > 0 && data.hubs.every(h => selectedIngressHubs.has(h.hubId));
@@ -1001,11 +1122,17 @@
       actions.push({ action: 'arrive', label: 'Mark Arrived' });
       actions.push({ action: 'undo-depart', label: 'Undo Departed', danger: true });
     }
-    if (t.status === 'arrived') actions.push({ action: 'undo-arrive', label: 'Undo Arrived', danger: true });
-    // Only worth offering before anyone boards - once riders are on, their
-    // tickets are already tied to this trip's destination for downstream
-    // routing (see the backend's own gate on this).
-    if (t.status === 'scheduled' && (t.leg === 'O1' || t.leg === 'R2')) {
+    if (t.status === 'arrived') {
+      actions.push({ action: 'undo-arrive', label: 'Undo Arrived', danger: true });
+      // Admin-only dispatch for an empty bus sitting somewhere after
+      // finishing a trip - which legs make sense depends on where it
+      // physically is now (its arrival destination), decided in the modal.
+      actions.push({ action: 'send', label: 'Move Bus' });
+    }
+    // Allowed any time before arrival - already-boarded riders keep whatever
+    // hub_id/arrival-role was resolved at their own board time, so this only
+    // affects new boards and the eventual arrival, not anyone already on.
+    if (t.status !== 'arrived' && (t.leg === 'O1' || t.leg === 'R2')) {
       actions.push({ action: 'change-destination', label: 'Change Destination' });
     }
     // Unlike destination, the plate is just a label - nothing downstream is
@@ -1015,11 +1142,14 @@
     if (t.status === 'scheduled' || t.status === 'boarding') {
       actions.push({ action: 'edit-plate', label: 'Edit License Plate' });
     }
-    // Only ever offered before anyone's boarded - same reasoning as above,
-    // and mirrors the backend's own onboard === 0 gate.
-    if (t.status === 'scheduled') {
+    // Admin can delete any not-yet-departed trip, even with riders boarded -
+    // the backend un-boards them first so they can be rescanned elsewhere.
+    if (t.status === 'scheduled' || t.status === 'boarding') {
       actions.push({ action: 'delete', label: 'Delete Trip', danger: true });
     }
+    // Available regardless of trip status - an incident can happen to a bus
+    // at any point in its trip, not just once arrived.
+    actions.push({ action: 'log-incident', label: 'Log Incident' });
     return actions;
   }
 
@@ -1039,13 +1169,36 @@
     `;
   }
 
+  // 'ingress'/'egress'/'transport' each keep their own cached trip list and
+  // their own re-render/refetch functions - these two helpers are the only
+  // place that needs to know about all three, so adding a kind elsewhere
+  // (tripMenuHtml/tripMenuActions) doesn't need touching.
+  function tripListForKind(kind) {
+    if (kind === 'ingress') return ingressData.trips;
+    if (kind === 'egress') return egressData.trips;
+    // Includes history too (not just active) - the 'transport' kind's cards
+    // can represent an arrived bus sourced from history (see transportLiveHtml's
+    // arrivedGroups), and actions like 'send'/'undo-arrive' need to find it.
+    return [...transportData.active, ...transportData.history];
+  }
+  function refetchForKind(kind) {
+    if (kind === 'ingress') return renderIngressTab();
+    if (kind === 'egress') return renderEgressTab();
+    return renderTransportTab();
+  }
+  function rerenderForKind(kind) {
+    if (kind === 'ingress') return renderIngressHtml();
+    if (kind === 'egress') return renderEgressHtml();
+    return renderTransportHtml();
+  }
+
   function wireTripMenu(kind) {
     document.querySelectorAll('[data-trip-menu-toggle]').forEach(el => {
       el.onclick = (e) => {
         e.stopPropagation();
         const tripId = parseInt(el.dataset.tripMenuToggle, 10);
         openTripMenu = openTripMenu === tripId ? null : tripId;
-        if (kind === 'ingress') renderIngressHtml(); else renderEgressHtml();
+        rerenderForKind(kind);
       };
     });
     document.querySelectorAll('[data-trip-action]').forEach(el => {
@@ -1054,42 +1207,70 @@
         const tripId = parseInt(el.dataset.tripId, 10);
         const action = el.dataset.tripAction;
         if (action === 'change-destination') {
-          const list = kind === 'ingress' ? ingressData.trips : egressData.trips;
-          const trip = (list || []).find(t => t.tripId === tripId);
+          const trip = (tripListForKind(kind) || []).find(t => t.tripId === tripId);
           if (!trip) return;
           openTripMenu = null;
           showDestinationModal(trip, async (destination) => {
             try {
               await api(`/trips/${tripId}/destination`, { method: 'POST', body: JSON.stringify({ destination }) });
               showToast('Destination updated', 'success');
-              if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+              refetchForKind(kind);
             } catch (e) { showToast(e.message); }
           });
           return;
         }
         if (action === 'delete') {
-          const list = kind === 'ingress' ? ingressData.trips : egressData.trips;
-          const trip = (list || []).find(t => t.tripId === tripId);
+          const trip = (tripListForKind(kind) || []).find(t => t.tripId === tripId);
           openTripMenu = null;
-          showConfirmModal(`Delete trip ${trip ? trip.licensePlate : ''}? This can't be undone.`, 'Delete Trip', async () => {
+          const plate = trip ? trip.licensePlate : '';
+          const message = trip && trip.onboard > 0
+            ? `Delete trip ${plate}? This has ${trip.onboard} rider(s) boarded - they'll be un-boarded so they can be rescanned onto a different bus. This can't be undone.`
+            : `Delete trip ${plate}? This can't be undone.`;
+          showConfirmModal(message, 'Delete Trip', async () => {
             try {
               await api(`/trips/${tripId}`, { method: 'DELETE' });
               showToast('Trip deleted', 'success');
-              if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+              refetchForKind(kind);
             } catch (e) { showToast(e.message); }
           });
           return;
         }
         if (action === 'edit-plate') {
-          const list = kind === 'ingress' ? ingressData.trips : egressData.trips;
-          const trip = (list || []).find(t => t.tripId === tripId);
+          const trip = (tripListForKind(kind) || []).find(t => t.tripId === tripId);
           if (!trip) return;
           openTripMenu = null;
           showEditPlateModal(trip, async (licensePlate) => {
             try {
               await api(`/trips/${tripId}/license-plate`, { method: 'POST', body: JSON.stringify({ licensePlate }) });
               showToast('License plate updated', 'success');
-              if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+              refetchForKind(kind);
+            } catch (e) { showToast(e.message); }
+          });
+          return;
+        }
+        if (action === 'send') {
+          const trip = (tripListForKind(kind) || []).find(t => t.tripId === tripId);
+          if (!trip) return;
+          openTripMenu = null;
+          showMoveBusModal(trip, async (body) => {
+            try {
+              await api('/trips', { method: 'POST', body: JSON.stringify(body) });
+              showToast('Bus en route', 'success');
+              refetchForKind(kind);
+            } catch (e) { showToast(e.message); }
+          });
+          return;
+        }
+        if (action === 'log-incident') {
+          const trip = (tripListForKind(kind) || []).find(t => t.tripId === tripId);
+          if (!trip) return;
+          openTripMenu = null;
+          showLogIncidentModal(trip.licensePlate, async (description) => {
+            try {
+              await api('/incidents', { method: 'POST', body: JSON.stringify({ licensePlate: trip.licensePlate, description }) });
+              showToast('Incident logged', 'success');
+              await refreshOpenIncidents();
+              refetchForKind(kind);
             } catch (e) { showToast(e.message); }
           });
           return;
@@ -1100,7 +1281,7 @@
             await api(`/trips/${tripId}/${action}`, { method: 'POST' });
             openTripMenu = null;
             showToast('Trip updated', 'success');
-            if (kind === 'ingress') renderIngressTab(); else renderEgressTab();
+            refetchForKind(kind);
           } catch (e) { showToast(e.message); }
         });
       };
@@ -1212,7 +1393,7 @@
       </div>
 
       <div class="card">
-        <h2 class="section">Bus Trips (Central → Hub)</h2>
+        <h2 class="section">Bus Trips (Premium Lounge → Hub)</h2>
         ${!data.trips.length ? '<div class="empty">No trips yet.</div>' : (() => {
           const enRoute = data.trips.filter(t => t.status !== 'arrived');
           const completed = data.trips.filter(t => t.status === 'arrived');
@@ -1289,6 +1470,587 @@
       } catch (e) { showToast(e.message); }
       renderEgressHtml();
     }
+  }
+
+  // ==================================================== BUSES (transport) ====
+  // Unified view across all four legs, unlike Ingress (O1/O2 only) and
+  // Egress (R2 only) - "where is every bus right now" plus a filterable
+  // history log. Reuses the same trip-card shape and 3-dot menu as
+  // Ingress/Egress (see tripListForKind/refetchForKind/rerenderForKind
+  // above) rather than anything new.
+  async function renderTransportTab() {
+    showLoadingIfEmpty();
+    // No query params - the backend always returns unconditioned data now;
+    // History's own leg/hub/date filters are applied client-side (see
+    // transportHistoryHtml) so they can't leak into what Live/By-Plate show.
+    // Incidents load alongside it (not just via the background badge poll)
+    // so the Incidents sub-tab and the red highlighting are never stale on
+    // first open, even right after login.
+    let data;
+    try {
+      [data] = await Promise.all([api('/dashboard/transport'), loadIncidentsData()]);
+    } catch (e) { showToast(e.message); return; }
+    transportData = data;
+    renderTransportHtml();
+  }
+
+  function transportCardHtml(t) {
+    const destClass = t.destination === 'venue' ? 'dest-venue' : t.destination === 'central' ? 'dest-central' : 'dest-hub';
+    const hasIncident = openIncidentPlates.has(t.licensePlate);
+    const timestamps = tripTimestampsHtml(t);
+    return `
+      <div class="trip-mini-card ${destClass}${hasIncident ? ' has-incident' : ''}">
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+          ${onboardRing(t.onboard, 44)}
+          <div style="flex:1; min-width:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <div>
+              <div style="font-weight:700;font-size:14px;">${escapeHtml(t.licensePlate)}${t.samePlateActive ? ' <span title="This plate has more than one active trip right now" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#D97706;vertical-align:middle;margin-left:4px;"></span>' : ''}${hasIncident ? ' <span title="Open incident logged for this bus" style="color:#DC2626;font-weight:700;">⚠</span>' : ''}</div>
+              <div class="ring-meta">${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))}</div>
+              ${timestamps ? `<div class="ring-meta" style="margin-top:2px;">${timestamps}</div>` : ''}
+            </div>
+            <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+              <div class="bus-status status-${t.status}">${STATUS_LABELS[t.status] || t.status}</div>
+              ${tripMenuHtml(t)}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Minutes between two ISO timestamps, formatted as "Xm" - same rounding
+  // convention as avgWaitAtCentralMinutes on the Departing dashboard.
+  function transportDurationLabel(fromIso, toIso) {
+    if (!fromIso || !toIso) return '—';
+    const mins = Math.round((new Date(toIso) - new Date(fromIso)) / 60000);
+    return `${mins}m`;
+  }
+
+  // "At" is meaningful whenever a bus is physically stationary somewhere -
+  // waiting to board (at its origin) or already arrived (at its
+  // destination). A departed-but-not-arrived bus is between the two,
+  // not "at" either one.
+  function transportAtLabel(t) {
+    if (t.status === 'scheduled' || t.status === 'boarding') return prettyLocation(t.origin);
+    if (t.status === 'arrived') return prettyLocation(t.destination);
+    return '—';
+  }
+
+  // One row per license plate that's done anything at all today - "where
+  // is EVERY bus," not just ones currently mid-trip. For each plate, shows
+  // its single most recent trip (by createdAt) across active *and*
+  // completed history alike, so a bus that arrived somewhere and hasn't
+  // started a new trip yet still shows up as "Arrived" at that location,
+  // instead of just disappearing once its trip finishes. If a plate somehow
+  // has more than one active trip at once (the multi-stop-bus scenario),
+  // the most recent one wins and samePlateActive still flags it - that flag
+  // only ever comes from the active array, so a genuinely idle/arrived
+  // plate never shows it. `trips` is every trip that plate has ever done,
+  // for the expand.
+  function transportPlateRows(data) {
+    const byPlate = {};
+    [...data.active, ...data.history].forEach((t) => {
+      if (!byPlate[t.licensePlate]) byPlate[t.licensePlate] = [];
+      byPlate[t.licensePlate].push(t);
+    });
+    return Object.keys(byPlate).sort().map((plate) => {
+      const trips = byPlate[plate].slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const current = trips[0];
+      return {
+        plate, trips,
+        status: current.status,
+        at: transportAtLabel(current),
+        departedFrom: prettyLocation(current.origin),
+        arrivingAt: prettyLocation(current.destination),
+        onboard: current.onboard,
+        leg: current.leg,
+        samePlateActive: current.samePlateActive || false,
+      };
+    });
+  }
+
+  // Three sub-tabs share this one bar (same shape as Ingress's leg-filter
+  // tabs / Central's sub-tab bar in checkin.html) - embedded directly in
+  // each sub-tab's own setTabBody call, not a separate persistent shell,
+  // since admin.html doesn't have one for nested tabs yet.
+  function transportSubTabBarHtml() {
+    return `
+      <div class="tabs" style="margin-bottom:14px;">
+        <div class="tab ${transportSubTab === 'live' ? 'active' : ''}" data-transport-subtab="live">Live</div>
+        <div class="tab ${transportSubTab === 'byPlate' ? 'active' : ''}" data-transport-subtab="byPlate">By Plate</div>
+        <div class="tab ${transportSubTab === 'history' ? 'active' : ''}" data-transport-subtab="history">History</div>
+        <div class="tab ${transportSubTab === 'incidents' ? 'active' : ''}" data-transport-subtab="incidents">Incidents${openIncidentPlates.size ? ` <span class="tab-badge">${openIncidentPlates.size}</span>` : ''}</div>
+      </div>
+    `;
+  }
+  function wireTransportSubTabBar() {
+    document.querySelectorAll('[data-transport-subtab]').forEach((el) => {
+      el.onclick = () => {
+        transportSubTab = el.dataset.transportSubtab;
+        renderTransportHtml();
+      };
+    });
+  }
+
+  function renderTransportHtml() {
+    if (transportSubTab === 'byPlate') return transportByPlateHtml();
+    if (transportSubTab === 'history') return transportHistoryHtml();
+    if (transportSubTab === 'incidents') return transportIncidentsHtml();
+    return transportLiveHtml();
+  }
+
+  // Live: stat row + the merged location view - Location Overview is now
+  // the single entry point (no more separate "Where buses are right now"
+  // section repeating the same grouping) - clicking a location's row
+  // expands its buses inline, right there.
+  // Action shown per location row - only real hubs get one (Premium
+  // Lounge/VCC aren't hubs, nothing to open/close there). Mirrors the same
+  // three states Hub's own screen walks through in order.
+  function hubActionButtonHtml(hub) {
+    if (hub.closedAt) {
+      return `<button data-transport-hub-action="reopen" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Reopen</button>`;
+    }
+    if (hub.openedAt) {
+      return `<button data-transport-hub-action="close" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Close</button>`;
+    }
+    return `<button data-transport-hub-action="open" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#166534;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Open</button>`;
+  }
+
+  function transportLiveHtml() {
+    const data = transportData;
+    // A plate can end up with more than one active trip at once (e.g. a bus
+    // moved before its prior trip was ever marked arrived) - only its single
+    // most recent trip is where it actually is right now, so a superseded
+    // older trip shouldn't still occupy its own location bucket alongside
+    // the current one. Same "latest trip per plate" rule already used for
+    // the By-Plate tab.
+    const latestTripIdByPlate = {};
+    transportPlateRows(data).forEach((p) => { latestTripIdByPlate[p.plate] = p.trips[0].tripId; });
+    const groups = {};
+    data.active.forEach((t) => {
+      if (latestTripIdByPlate[t.licensePlate] !== t.tripId) return;
+      if (!groups[t.locationLabel]) groups[t.locationLabel] = [];
+      groups[t.locationLabel].push(t);
+    });
+    // Arrived buses are per-plate, not per-trip - a bus that arrived
+    // somewhere and hasn't started a new trip yet should count once at its
+    // current resting place, not once per historical arrival there (reuses
+    // the same "most recent trip per plate" logic already built for the
+    // By-Plate tab, so the two stay consistent with each other).
+    const arrivedGroups = {};
+    transportPlateRows(data).forEach((p) => {
+      if (p.status !== 'arrived') return;
+      if (!arrivedGroups[p.arrivingAt]) arrivedGroups[p.arrivingAt] = [];
+      arrivedGroups[p.arrivingAt].push(p.trips[0]);
+    });
+    const hubByName = {};
+    data.hubs.forEach((h) => { hubByName[h.name] = h; });
+    // Every hub plus Premium Lounge/VCC, always shown (not just ones with
+    // buses right now) - this is also the hub open/close control surface,
+    // so a hub with zero activity still needs its row.
+    const locationNames = [...data.hubs.map((h) => h.name), 'Premium Lounge', 'VCC'];
+    const locationRows = locationNames.map((name) => ({
+      name,
+      at: (groups[`Waiting at ${name}`] || []).length,
+      enRoute: (groups[`En route to ${name}`] || []).length,
+      arrived: (arrivedGroups[name] || []).length,
+      hub: hubByName[name] || null,
+    }));
+
+    setTabBody(`
+      ${transportSubTabBarHtml()}
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.summary.boarding}</div><div class="stat-label">Boarding</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.summary.totalOnboard}</div><div class="stat-label">Onboard Right Now</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.summary.departed}</div><div class="stat-label">En Route</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('ticket', 20)}</div><div class="stat-value">${data.summary.completedToday}</div><div class="stat-label">Completed Today</div></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section">Hub &amp; Location Status</h2>
+        <div class="table-wrap">
+          <table>
+            <tr><th></th><th>Location</th><th>Waiting</th><th>En Route</th><th>Arrived</th><th>Hub Opened</th><th>Hub Closed</th><th>Action</th></tr>
+            ${locationRows.map((r) => `
+              <tr data-transport-group="${escapeHtml(r.name)}" style="cursor:pointer;">
+                <td>${expandedTransportGroups.has(r.name) ? '▾' : '▸'}</td>
+                <td>${escapeHtml(r.name)}</td>
+                <td>${r.at}</td>
+                <td>${r.enRoute}</td>
+                <td>${r.arrived}</td>
+                <td>${r.hub && r.hub.openedAt ? escapeHtml(formatShortTime(r.hub.openedAt)) : '—'}</td>
+                <td>${r.hub && r.hub.closedAt ? escapeHtml(formatShortTime(r.hub.closedAt)) : '—'}</td>
+                <td>${r.hub ? hubActionButtonHtml(r.hub) : '—'}</td>
+              </tr>
+              ${expandedTransportGroups.has(r.name) ? `
+                <tr><td colspan="8" style="padding:0;">
+                  <div style="padding:4px 0 10px;">
+                    ${r.at ? `
+                      <h2 class="section" style="font-size:11px;">Waiting at ${escapeHtml(r.name)} (${r.at})</h2>
+                      ${(groups[`Waiting at ${r.name}`] || []).map(transportCardHtml).join('')}
+                    ` : ''}
+                    ${r.enRoute ? `
+                      <h2 class="section" style="font-size:11px;margin-top:${r.at ? '10px' : '0'};">En Route to ${escapeHtml(r.name)} (${r.enRoute})</h2>
+                      ${(groups[`En route to ${r.name}`] || []).map(transportCardHtml).join('')}
+                    ` : ''}
+                    ${r.arrived ? `
+                      <h2 class="section" style="font-size:11px;margin-top:${(r.at || r.enRoute) ? '10px' : '0'};">Arrived at ${escapeHtml(r.name)} (${r.arrived})</h2>
+                      ${(arrivedGroups[r.name] || []).map(transportCardHtml).join('')}
+                    ` : ''}
+                    ${!r.at && !r.enRoute && !r.arrived ? '<div class="empty">No buses here right now.</div>' : ''}
+                  </div>
+                </td></tr>
+              ` : ''}
+            `).join('')}
+          </table>
+        </div>
+      </div>
+    `);
+
+    wireTransportSubTabBar();
+    document.querySelectorAll('[data-transport-group]').forEach((el) => {
+      el.onclick = () => {
+        const name = el.dataset.transportGroup;
+        if (expandedTransportGroups.has(name)) expandedTransportGroups.delete(name);
+        else expandedTransportGroups.add(name);
+        renderTransportHtml();
+      };
+    });
+    document.querySelectorAll('[data-transport-hub-action]').forEach((el) => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const hubId = el.dataset.transportHubId;
+        const action = el.dataset.transportHubAction;
+        if (action === 'open') {
+          showConfirmModal('Open this hub for the day?', 'Open Hub', async () => {
+            try {
+              await api(`/hubs/${encodeURIComponent(hubId)}/open`, { method: 'POST' });
+              showToast('Hub opened', 'success');
+              renderTransportTab();
+            } catch (e) { showToast(e.message); }
+          });
+        } else if (action === 'close') {
+          // Same not-yet-departed heads-up shown on Hub's own screen -
+          // computed from the same active-trips data this tab already has.
+          const notDeparted = data.active.filter((t) => t.leg === 'O1' && t.origin === hubId && (t.status === 'scheduled' || t.status === 'boarding')).length;
+          const message = notDeparted > 0
+            ? `⚠️ ${notDeparted} bus${notDeparted === 1 ? ' has' : 'es have'} not departed yet. Please only close the hub if all the buses have departed. Close anyway?`
+            : 'Please only close the hub if all the buses have departed. Close this hub?';
+          showConfirmModal(message, 'Close Hub', async () => {
+            try {
+              await api(`/hubs/${encodeURIComponent(hubId)}/close`, { method: 'POST' });
+              showToast('Hub closed', 'success');
+              renderTransportTab();
+            } catch (e) { showToast(e.message); }
+          });
+        } else if (action === 'reopen') {
+          showConfirmModal('Reopen this hub? New trips can be created there again.', 'Reopen Hub', async () => {
+            try {
+              await api(`/hubs/${encodeURIComponent(hubId)}/reopen`, { method: 'POST' });
+              showToast('Hub reopened', 'success');
+              renderTransportTab();
+            } catch (e) { showToast(e.message); }
+          });
+        }
+      };
+    });
+    wireTripMenu('transport');
+  }
+
+  function transportByPlateHtml() {
+    const data = transportData;
+    const search = transportSearch.trim().toUpperCase();
+
+    const allPlateRows = transportPlateRows(data);
+    const distinctAt = [...new Set(allPlateRows.map((p) => p.at))].sort();
+    const distinctDepartedFrom = [...new Set(allPlateRows.map((p) => p.departedFrom))].sort();
+    const distinctArrivingAt = [...new Set(allPlateRows.map((p) => p.arrivingAt))].sort();
+    const plateRows = allPlateRows.filter((p) => {
+      if (search && !p.plate.toUpperCase().includes(search)) return false;
+      if (transportPlateFilters.status && p.status !== transportPlateFilters.status) return false;
+      if (transportPlateFilters.at && p.at !== transportPlateFilters.at) return false;
+      if (transportPlateFilters.departedFrom && p.departedFrom !== transportPlateFilters.departedFrom) return false;
+      if (transportPlateFilters.arrivingAt && p.arrivingAt !== transportPlateFilters.arrivingAt) return false;
+      return true;
+    });
+
+    setTabBody(`
+      ${transportSubTabBarHtml()}
+      <div class="card">
+        <label>Search by Vehicle</label>
+        <input id="transportSearchInput" autocomplete="off" placeholder="e.g. BC1234" value="${escapeHtml(transportSearch)}" />
+      </div>
+
+      <div class="card">
+        <h2 class="section">All Vehicles</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <select id="transportPlateStatusFilter" style="flex:1;min-width:100px;">
+            <option value="">All statuses</option>
+            <option value="scheduled" ${transportPlateFilters.status === 'scheduled' ? 'selected' : ''}>Scheduled</option>
+            <option value="boarding" ${transportPlateFilters.status === 'boarding' ? 'selected' : ''}>Boarding</option>
+            <option value="departed" ${transportPlateFilters.status === 'departed' ? 'selected' : ''}>Departed</option>
+            <option value="arrived" ${transportPlateFilters.status === 'arrived' ? 'selected' : ''}>Arrived</option>
+          </select>
+          <select id="transportPlateAtFilter" style="flex:1;min-width:100px;">
+            <option value="">All "At"</option>
+            ${distinctAt.map((v) => `<option value="${escapeHtml(v)}" ${transportPlateFilters.at === v ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+          </select>
+          <select id="transportPlateDepartedFromFilter" style="flex:1;min-width:100px;">
+            <option value="">All origins</option>
+            ${distinctDepartedFrom.map((v) => `<option value="${escapeHtml(v)}" ${transportPlateFilters.departedFrom === v ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+          </select>
+          <select id="transportPlateArrivingAtFilter" style="flex:1;min-width:100px;">
+            <option value="">All destinations</option>
+            ${distinctArrivingAt.map((v) => `<option value="${escapeHtml(v)}" ${transportPlateFilters.arrivingAt === v ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+          </select>
+        </div>
+        ${plateRows.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr><th></th><th>Vehicle</th><th>Status</th><th>At</th><th>Departed From</th><th>Arriving At</th><th>Onboard</th></tr>
+              ${plateRows.map((p) => `
+                <tr data-transport-plate="${escapeHtml(p.plate)}" class="${openIncidentPlates.has(p.plate) ? 'has-incident' : ''}" style="cursor:pointer;">
+                  <td>${expandedTransportPlates.has(p.plate) ? '▾' : '▸'}</td>
+                  <td>${escapeHtml(p.plate)}${p.samePlateActive ? ' <span title="This vehicle has more than one active trip right now" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#D97706;vertical-align:middle;margin-left:4px;"></span>' : ''}${openIncidentPlates.has(p.plate) ? ' <span title="Open incident logged for this bus" style="color:#DC2626;font-weight:700;">⚠</span>' : ''}</td>
+                  <td><span class="bus-status status-${p.status}">${STATUS_LABELS[p.status] || p.status}</span></td>
+                  <td>${escapeHtml(p.at)}</td>
+                  <td>${escapeHtml(p.departedFrom)}</td>
+                  <td>${escapeHtml(p.arrivingAt)}</td>
+                  <td>${p.onboard}</td>
+                </tr>
+                ${expandedTransportPlates.has(p.plate) ? `
+                  <tr><td colspan="7" style="padding:0;">
+                    <div class="table-wrap" style="margin:4px 0 10px;">
+                      <table>
+                        <tr><th>Route</th><th>Status</th><th>Onboard</th><th>Created</th><th>Departed</th><th>Arrived</th></tr>
+                        ${p.trips.map((t) => `
+                          <tr>
+                            <td>${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))}</td>
+                            <td>${STATUS_LABELS[t.status] || t.status}</td>
+                            <td>${t.onboard}</td>
+                            <td>${escapeHtml(formatShortTime(t.createdAt))}</td>
+                            <td>${t.departedAt ? escapeHtml(formatShortTime(t.departedAt)) : '—'}</td>
+                            <td>${t.arrivedAt ? escapeHtml(formatShortTime(t.arrivedAt)) : '—'}</td>
+                          </tr>
+                        `).join('')}
+                      </table>
+                    </div>
+                  </td></tr>
+                ` : ''}
+              `).join('')}
+            </table>
+          </div>
+        ` : '<div class="empty">No buses match these filters.</div>'}
+      </div>
+    `);
+
+    wireTransportSubTabBar();
+    const searchInput = document.getElementById('transportSearchInput');
+    searchInput.oninput = () => { transportSearch = searchInput.value; transportByPlateHtml(); };
+    searchInput.focus();
+    searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    document.getElementById('transportPlateStatusFilter').onchange = (e) => {
+      transportPlateFilters.status = e.target.value;
+      transportByPlateHtml();
+    };
+    document.getElementById('transportPlateAtFilter').onchange = (e) => {
+      transportPlateFilters.at = e.target.value;
+      transportByPlateHtml();
+    };
+    document.getElementById('transportPlateDepartedFromFilter').onchange = (e) => {
+      transportPlateFilters.departedFrom = e.target.value;
+      transportByPlateHtml();
+    };
+    document.getElementById('transportPlateArrivingAtFilter').onchange = (e) => {
+      transportPlateFilters.arrivingAt = e.target.value;
+      transportByPlateHtml();
+    };
+    document.querySelectorAll('[data-transport-plate]').forEach((el) => {
+      el.onclick = () => {
+        const plate = el.dataset.transportPlate;
+        if (expandedTransportPlates.has(plate)) expandedTransportPlates.delete(plate);
+        else expandedTransportPlates.add(plate);
+        transportByPlateHtml();
+      };
+    });
+  }
+
+  function transportHistoryHtml() {
+    const data = transportData;
+    const search = transportSearch.trim().toUpperCase();
+    const matches = (t) => {
+      if (search && !t.licensePlate.toUpperCase().includes(search)) return false;
+      if (transportHistoryFilters.leg && t.leg !== transportHistoryFilters.leg) return false;
+      if (transportHistoryFilters.hubId && t.origin !== transportHistoryFilters.hubId && t.destination !== transportHistoryFilters.hubId) return false;
+      if (transportHistoryFilters.date) {
+        const day = new Date(t.createdAt).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+        if (day !== transportHistoryFilters.date) return false;
+      }
+      return true;
+    };
+    const historyFiltered = data.history.filter(matches).sort((a, b) => {
+      const { column, direction } = transportHistorySort;
+      let av = a[column], bv = b[column];
+      if (column === 'route') { av = a.origin + a.destination; bv = b.origin + b.destination; }
+      if (av === bv) return 0;
+      const cmp = (av === null || av === undefined) ? -1 : (bv === null || bv === undefined) ? 1 : (av > bv ? 1 : -1);
+      return direction === 'asc' ? cmp : -cmp;
+    });
+    const sortArrow = (col) => transportHistorySort.column === col ? (transportHistorySort.direction === 'asc' ? ' ▲' : ' ▼') : '';
+
+    setTabBody(`
+      ${transportSubTabBarHtml()}
+      <div class="card">
+        <h2 class="section">Trip Summary (Today)</h2>
+        <div class="table-wrap">
+          <table>
+            <tr><th>Route</th><th>Trips Completed</th><th>Avg Onboard</th></tr>
+            <tr><td>Hub → Premium Lounge/VCC</td><td>${data.tripSummary.O1.tripCount}</td><td>${data.tripSummary.O1.avgOnboard}</td></tr>
+            <tr><td>Premium Lounge → VCC</td><td>${data.tripSummary.O2.tripCount}</td><td>${data.tripSummary.O2.avgOnboard}</td></tr>
+            <tr><td>Premium Lounge → Hub</td><td>${data.tripSummary.R2.tripCount}</td><td>${data.tripSummary.R2.avgOnboard}</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>Search by Vehicle</label>
+        <input id="transportSearchInput" autocomplete="off" placeholder="e.g. BC1234" value="${escapeHtml(transportSearch)}" />
+      </div>
+
+      <div class="card">
+        <h2 class="section">Trip History</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <select id="transportLegFilter" style="flex:1;min-width:110px;">
+            <option value="">All routes</option>
+            <option value="O1" ${transportHistoryFilters.leg === 'O1' ? 'selected' : ''}>Hub → Premium Lounge/VCC</option>
+            <option value="O2" ${transportHistoryFilters.leg === 'O2' ? 'selected' : ''}>Premium Lounge → VCC</option>
+            <option value="R2" ${transportHistoryFilters.leg === 'R2' ? 'selected' : ''}>Premium Lounge → Hub</option>
+          </select>
+          <select id="transportHubFilter" style="flex:1;min-width:140px;">
+            <option value="">All hubs</option>
+            ${data.hubs.map((h) => `<option value="${escapeHtml(h.id)}" ${transportHistoryFilters.hubId === h.id ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}
+          </select>
+          <input id="transportDateFilter" type="date" value="${escapeHtml(transportHistoryFilters.date)}" style="flex:1;min-width:140px;" />
+        </div>
+        ${historyFiltered.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr>
+                <th data-sort-col="licensePlate" style="cursor:pointer;">Vehicle${sortArrow('licensePlate')}</th>
+                <th data-sort-col="route" style="cursor:pointer;">Route${sortArrow('route')}</th>
+                <th data-sort-col="onboard" style="cursor:pointer;">Onboard${sortArrow('onboard')}</th>
+                <th>Boarding Duration</th>
+                <th data-sort-col="departedAt" style="cursor:pointer;">Departed${sortArrow('departedAt')}</th>
+                <th data-sort-col="arrivedAt" style="cursor:pointer;">Arrived${sortArrow('arrivedAt')}</th>
+              </tr>
+              ${historyFiltered.map(t => `
+                <tr>
+                  <td>${escapeHtml(t.licensePlate)}</td>
+                  <td>${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))}</td>
+                  <td>${t.onboard}</td>
+                  <td>${transportDurationLabel(t.boardingStartedAt, t.departedAt)}</td>
+                  <td>${t.departedAt ? escapeHtml(formatShortTime(t.departedAt)) : '—'}</td>
+                  <td>${t.arrivedAt ? escapeHtml(formatShortTime(t.arrivedAt)) : '—'}</td>
+                </tr>
+              `).join('')}
+            </table>
+          </div>
+        ` : '<div class="empty">No completed trips match these filters.</div>'}
+      </div>
+    `);
+
+    wireTransportSubTabBar();
+    const searchInput = document.getElementById('transportSearchInput');
+    searchInput.oninput = () => { transportSearch = searchInput.value; transportHistoryHtml(); };
+    searchInput.focus();
+    searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    document.getElementById('transportLegFilter').onchange = (e) => {
+      transportHistoryFilters.leg = e.target.value;
+      transportHistoryHtml();
+    };
+    document.getElementById('transportHubFilter').onchange = (e) => {
+      transportHistoryFilters.hubId = e.target.value;
+      transportHistoryHtml();
+    };
+    document.getElementById('transportDateFilter').onchange = (e) => {
+      transportHistoryFilters.date = e.target.value;
+      transportHistoryHtml();
+    };
+    document.querySelectorAll('[data-sort-col]').forEach((el) => {
+      el.onclick = () => {
+        const col = el.dataset.sortCol;
+        if (transportHistorySort.column === col) {
+          transportHistorySort.direction = transportHistorySort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+          transportHistorySort = { column: col, direction: 'asc' };
+        }
+        transportHistoryHtml();
+      };
+    });
+  }
+
+  // Sub-tab of Buses, not its own top-level tab - incidentsData/
+  // openIncidentPlates are already loaded by renderTransportTab (and kept
+  // fresh by refreshOpenIncidents), so this is a plain sync render like its
+  // Live/By-Plate/History siblings, not its own fetch entry point.
+  function transportIncidentsHtml() {
+    const rows = incidentsData;
+    setTabBody(`
+      ${transportSubTabBarHtml()}
+      <div class="card">
+        <h2 class="section">Log Incident</h2>
+        <label>License Plate</label>
+        <input id="incidentPlateInput" autocomplete="off" placeholder="e.g. BC1234" />
+        <label style="margin-top:10px;">Description</label>
+        <textarea id="incidentDescInput" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid #D8CDB8;font-size:14px;box-sizing:border-box;font-family:inherit;"></textarea>
+        <button class="btn btn-primary" id="logIncidentBtn" style="margin-top:10px;">Log Incident</button>
+      </div>
+
+      <div class="card">
+        <h2 class="section">Incidents</h2>
+        ${rows.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr><th>Plate</th><th>Description</th><th>Reported At</th><th>Status</th><th></th></tr>
+              ${rows.map((i) => `
+                <tr class="${i.status === 'open' ? 'has-incident' : ''}">
+                  <td>${escapeHtml(i.licensePlate)}</td>
+                  <td>${escapeHtml(i.description)}</td>
+                  <td>${escapeHtml(formatShortTime(i.createdAt))}</td>
+                  <td><span class="bus-status ${i.status === 'open' ? 'status-boarding' : 'status-arrived'}">${i.status === 'open' ? 'Open' : 'Resolved'}</span></td>
+                  <td><button class="btn ${i.status === 'open' ? 'btn-primary' : 'btn-outline'}" data-incident-action="${i.status === 'open' ? 'resolve' : 'reopen'}" data-incident-id="${i.id}" style="padding:6px 10px;font-size:12px;min-height:auto;">${i.status === 'open' ? 'Mark Resolved' : 'Reopen'}</button></td>
+                </tr>
+              `).join('')}
+            </table>
+          </div>
+        ` : '<div class="empty">No incidents logged.</div>'}
+      </div>
+    `);
+
+    wireTransportSubTabBar();
+    wireLicensePlateInput('incidentPlateInput');
+    document.getElementById('logIncidentBtn').onclick = async () => {
+      const licensePlate = document.getElementById('incidentPlateInput').value.trim();
+      const description = document.getElementById('incidentDescInput').value.trim();
+      if (!licensePlate || !description) { showToast('Plate and description are both required'); return; }
+      try {
+        await api('/incidents', { method: 'POST', body: JSON.stringify({ licensePlate, description }) });
+        showToast('Incident logged', 'success');
+        renderTransportTab();
+      } catch (e) { showToast(e.message); }
+    };
+
+    document.querySelectorAll('[data-incident-action]').forEach((el) => {
+      el.onclick = async () => {
+        const id = el.dataset.incidentId;
+        const action = el.dataset.incidentAction;
+        try {
+          await api(`/incidents/${id}/${action}`, { method: 'POST' });
+          showToast(action === 'resolve' ? 'Marked resolved' : 'Reopened', 'success');
+          renderTransportTab();
+        } catch (e) { showToast(e.message); }
+      };
+    });
   }
 
   // ============================================================= REPORT ====
@@ -1460,77 +2222,32 @@
     `;
   }
 
-  // =========================================================== TRANSPORT ====
-  async function renderTransportTab() {
-    showLoadingIfEmpty();
-    let data;
-    try { data = await api('/dashboard/transport'); } catch (e) { showToast(e.message); return; }
-
-    const all = [...data.scheduled, ...data.boarding, ...data.departed, ...data.arrived];
-    const totalCapacity = all.reduce((s, b) => s + b.capacity, 0);
-    const totalOnboard = all.reduce((s, b) => s + b.onboard, 0);
-
-    function busRing(b, ringColor) {
-      const pct = b.capacity > 0 ? b.onboard / b.capacity : 0;
-      return `
-        <div class="ring-row" style="padding:8px 0; border-top:1px solid #E8E1D3;">
-          ${donutRing(pct, { size: 44, stroke: 5, color: ringColor, fontSize: 9, label: `${b.onboard}/${b.capacity}` })}
-          <div class="ring-info">
-            <div class="ring-name" style="font-size:13px;">${escapeHtml(b.hubName)} — ${escapeHtml(b.label)}</div>
-            <div class="ring-meta">${b.onboard} of ${b.capacity}${b.standbyOnboard > 0 ? ` · ${b.standbyOnboard} standby` : ''}</div>
-          </div>
-        </div>
-      `;
-    }
-
-    renderShell(`
-      <div class="stat-row">
-        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${all.length}</div><div class="stat-label">Total Buses</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value ${(`${totalOnboard}/${totalCapacity}`).length > 6 ? 'stat-value-long' : ''}">${totalOnboard}/${totalCapacity}</div><div class="stat-label">Onboard</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.arrived.length}</div><div class="stat-label">Arrived</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${data.standby.total}</div><div class="stat-label">Standby Issued</div></div>
-      </div>
-      <div class="bar-chart-wrap" style="height:150px; margin-bottom:16px;">
-        ${barChart([
-          { label: 'Scheduled', value: data.scheduled.length, color: '#57534E' },
-          { label: 'Boarding', value: data.boarding.length, color: '#f59e0b' },
-          { label: 'Departed', value: data.departed.length, color: '#8C734C' },
-          { label: 'Arrived', value: data.arrived.length, color: '#6b5636' },
-        ], { height: 100 })}
-      </div>
-
-      ${data.standby.total > 0 ? `
-        <div class="card">
-          <h2 class="section">Standby tickets issued, by hub</h2>
-          ${data.standby.byHub.map(h => `<div class="row-flex"><div>${escapeHtml(h.hubName)}</div><div>${h.count}</div></div>`).join('')}
-        </div>
-      ` : ''}
-
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#57534E;"></span>Scheduled — capacity ready, not yet boarding</h2>
-        ${data.scheduled.length ? data.scheduled.map(b => busRing(b, '#57534E')).join('') : '<div class="empty">None.</div>'}
-      </div>
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#f59e0b;"></span>Boarding now</h2>
-        ${data.boarding.length ? data.boarding.map(b => busRing(b, '#f59e0b')).join('') : '<div class="empty">None.</div>'}
-      </div>
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#8C734C;"></span>Departed — en route to central hub</h2>
-        ${data.departed.length ? data.departed.map(b => busRing(b, '#8C734C')).join('') : '<div class="empty">None.</div>'}
-      </div>
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#6b5636;"></span>Arrived at central hub</h2>
-        ${data.arrived.length ? data.arrived.map(b => busRing(b, '#6b5636')).join('') : '<div class="empty">None.</div>'}
-      </div>
-    `);
-  }
-
   function loadCurrentTabBody() {
     if (tab === 'sales') renderSalesTab();
     else if (tab === 'ingress') renderIngressTab();
     else if (tab === 'egress') renderEgressTab();
     else if (tab === 'report') renderReportTab();
     else if (tab === 'transport') renderTransportTab();
+  }
+
+  // Single source of truth for incidentsData/openIncidentPlates - both the
+  // background poll and renderTransportTab's own tab-entry fetch go through
+  // this so they never diverge into two separate copies.
+  async function loadIncidentsData() {
+    incidentsData = await api('/incidents');
+    openIncidentPlates = new Set(incidentsData.filter((i) => i.status === 'open').map((i) => i.licensePlate));
+  }
+
+  // Powers the Incidents sub-tab's badge count and the red highlighting
+  // elsewhere on the Buses tab - fetched independently of whichever
+  // top-level tab is active so the badge is fresh the moment admin switches
+  // to Buses, not just after Buses' own fetch runs. Only refreshes the
+  // Buses tab body (via the same no-flicker refreshCurrentTabData() the
+  // 10s poll already uses) - no-op if some other top-level tab is active,
+  // since incidents have no visibility outside Buses now.
+  async function refreshOpenIncidents() {
+    try { await loadIncidentsData(); } catch (e) { return; }
+    if (tab === 'transport') refreshCurrentTabData();
   }
 
   // Called on tab switch / initial boot: rebuilds the header and tab bar once,
@@ -1550,9 +2267,18 @@
   function boot() {
     if (!token || !user) { renderLogin(); return; }
     renderCurrentTab();
+    refreshOpenIncidents();
   }
   boot();
-  setInterval(() => { if (token && ['sales','ingress','egress','transport'].includes(tab)) refreshCurrentTabData(); }, 10000);
+  setInterval(() => {
+    if (!token) return;
+    // 'incidents' and 'transport' are refreshed by refreshOpenIncidents()
+    // itself (it's the single source of truth for incidentsData, so
+    // renderIncidentsTab reads that directly instead of fetching its own
+    // copy) - refreshing them here too would just double the network calls.
+    if (['sales','ingress','egress'].includes(tab)) refreshCurrentTabData();
+    refreshOpenIncidents();
+  }, 10000);
 </script>
 <script src="src/footer.js"></script>
 </body>

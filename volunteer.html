@@ -1058,7 +1058,10 @@
   function checkinSubNavHtml() {
     return `
       <div class="tabs" style="margin-bottom:10px;">
-        <div class="tab ${checkinSubTab === 'depart' ? 'active' : ''}" data-subtab="depart">Send to Central</div>
+
+
+
+        <div class="tab ${checkinSubTab === 'depart' ? 'active' : ''}" data-subtab="depart">Send to Premium Lounge</div>
         <div class="tab ${checkinSubTab === 'arrive' ? 'active' : ''}" data-subtab="arrive">Bus Arrived</div>
       </div>
     `;
@@ -1151,7 +1154,7 @@
         <div class="big-count" id="onboardCount">${trip.onboard}</div>
         <div class="cap-label">onboard · ${escapeHtml(trip.licensePlate)} · <span class="bus-status status-${trip.status}">${trip.status}</span></div>
       </div>
-      ${canBoard ? scannerCardHtml('board') : `<div class="card"><div class="empty">This trip has departed for Central.</div></div>`}
+      ${canBoard ? scannerCardHtml('board') : `<div class="card"><div class="empty">This trip has departed for Premium Lounge.</div></div>`}
       ${canBoard ? `
         <button class="manual-toggle" id="manualToggle">Enter code manually instead</button>
         <div id="manualWrap" style="display:none;">
@@ -1159,7 +1162,7 @@
         </div>
       ` : ''}
       ${canDepart ? `<button class="btn btn-danger" id="departBtn">Complete &amp; Depart</button>` : ''}
-      ${canArrive ? `<button class="btn btn-primary" id="arriveBtn">Mark Arrived at Central</button>` : ''}
+      ${canArrive ? `<button class="btn btn-primary" id="arriveBtn">Mark Arrived at Premium Lounge</button>` : ''}
     `);
     wireCheckinSubNav();
 
@@ -1204,7 +1207,7 @@
       try {
         await api(`/trips/${activeCheckinTripId}/arrive`, { method: 'POST' });
         feedback(true);
-        showToast('Trip marked arrived at Central', 'success');
+        showToast('Trip marked arrived at Premium Lounge', 'success');
         activeCheckinTripId = null;
         renderCheckinTab();
       } catch (e) { showToast(e.message); }
@@ -1254,7 +1257,7 @@
           <div><div class="name">${escapeHtml(t.licensePlate)}</div><div class="meta">${t.onboard} onboard</div></div>
           <div>${icon('arrowRight', 16)}</div>
         </div>
-      `).join('') : '<div class="card"><div class="empty">No buses en route from Central right now.</div></div>'}
+      `).join('') : '<div class="card"><div class="empty">No buses en route from Premium Lounge right now.</div></div>'}
     `);
     wireCheckinSubNav();
     document.querySelectorAll('[data-arrive]').forEach(el => {

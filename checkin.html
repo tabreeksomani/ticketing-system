@@ -47,9 +47,15 @@
      is far more reliable during live video, and keeps it near eye level
      while scanning either way. */
   .toast { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); padding: 16px 22px; border-radius: 12px; font-size: 17px; z-index: 40; max-width: 92%; text-align: center; font-weight: 700; box-shadow: 0 2px 10px rgba(0,0,0,0.15); }
-  .toast-error { background: #FEE2E2; border: 2px solid #EF4444; color: #B91C1C; }
   .toast-success { background: #DCFCE7; border: 1px solid #86EFAC; color: #166534; }
   .toast-warn { background: #FEF3C7; border: 1px solid #FDE68A; color: #92400E; }
+  /* Scan errors (the ones easy to miss mid-scan with the camera viewfinder
+     taking over the screen) show inline in the scan-log spot instead - see
+     updateHubScanLog/updateCentralScanLog. This plain toast-error is only
+     left for one-off, already-deliberate actions (delete trip, edit plate,
+     etc.) where the volunteer just tapped a button and is already looking
+     right at that spot. */
+  .toast-error { background: #FEE2E2; border: 2px solid #EF4444; color: #B91C1C; }
   .login-card { max-width: 360px; width: 100%; margin: 0 auto; }
 
   /* ---- camera scanner ---- */
@@ -60,6 +66,16 @@
   .scan-frame.flash { border-color: #22c55e; border-width: 3px; }
   .scanner-status { padding: 10px 14px; font-size: 12px; color: #756c5a; text-align: center; background: #FFFFFF; }
   .scanner-status.warn { color: #B91C1C; }
+  /* Distinct from .scan-frame.flash (which just means "a QR code was
+     decoded," fires before we know the board() result) - this reflects the
+     actual board outcome, right on top of the camera view where a
+     volunteer's eyes already are. Absolutely positioned within the normal
+     in-flow .scanner-video-wrap, not viewport-fixed, so none of the mobile
+     position:fixed quirks that broke the floating toast/overlay attempts
+     apply here. */
+  .scan-result-flash { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; padding: 16px; text-align: center; font-weight: 800; font-size: 16px; opacity: 0; pointer-events: none; transition: opacity 0.15s; z-index: 2; }
+  .scan-result-flash.show.success { opacity: 1; background: rgba(22,101,52,0.82); color: #fff; }
+  .scan-result-flash.show.error { opacity: 1; background: rgba(153,27,27,0.88); color: #fff; }
   .manual-toggle { background: none; border: none; color: #8C734C; font-size: 13px; text-align: center; width: 100%; padding: 10px 0; cursor: pointer; text-decoration: underline; }
   .danger-link { background: none; border: none; color: #B91C1C; font-size: 13px; text-align: center; width: 100%; padding: 6px 0; cursor: pointer; text-decoration: underline; }
 </style>
@@ -130,8 +146,13 @@
     if (!t.departedAt) return '';
     return `${formatShortTime(t.departedAt)} → ${t.arrivedAt ? formatShortTime(t.arrivedAt) : '—'}`;
   }
+  // Display names only - internal ids/roles ('central', 'venue') are
+  // unchanged in the data model and API, this just relabels what's shown:
+  // "Central" -> "Premium Lounge", "Venue" -> "VCC".
   function prettyLocation(id) {
     if (!id) return id;
+    if (id === 'central') return 'Premium Lounge';
+    if (id === 'venue') return 'VCC';
     return id.charAt(0).toUpperCase() + id.slice(1);
   }
 
@@ -145,7 +166,7 @@
   // specifically, not "Venue" (which is what Central/Venue's own screens
   // call the same underlying destination value).
   function hubDestinationLabel(destination) {
-    return destination === 'venue' ? 'VCC' : 'Central';
+    return destination === 'venue' ? 'VCC' : 'Premium Lounge';
   }
 
   // Departure lists (Hub's own, Central's Send to Venue/Hub) show full
@@ -165,6 +186,10 @@
     // Venue/Hub), which are the origin side and are no longer allowed to
     // mark a trip arrived at all.
     const showMarkArrived = !!opts.isArrivalList && !!t.departedAt && !t.arrivedAt;
+    // VCC-only: once a bus is actually here, it can be sent straight back to
+    // Premium Lounge from this same screen - no separate admin dispatch step
+    // needed for the return leg.
+    const showSendToCentral = !!opts.showSendToCentral && !!t.arrivedAt;
     // Riders are already boarding this one and it hasn't departed yet - flag
     // it loudly on origin-side lists so it doesn't get left sitting there.
     // Arrival lists never show a 'boarding' trip (they only ever list
@@ -188,6 +213,7 @@
             ${timestamps ? `<div class="meta" style="margin-top:4px;${opts.showRoute ? 'font-size:13px;' : ''}">${timestamps}</div>` : ''}
             ${boardingAlert && clickable ? `<div class="meta" style="margin-top:4px;color:#92400E;font-weight:700;">Tap to finish scanning &amp; mark departed</div>` : ''}
             ${showMarkArrived ? `<button class="btn btn-primary" data-mark-arrived="${t.id}" style="margin-top:8px;padding:10px;font-size:13px;min-height:38px;">Mark arrived</button>` : ''}
+            ${showSendToCentral ? `<button class="btn btn-primary" data-send-to-central="${t.id}" data-license-plate="${escapeHtml(t.licensePlate)}" style="margin-top:8px;padding:10px;font-size:13px;min-height:38px;">Send to Premium Lounge</button>` : ''}
           </div>
         </div>
       </div>
@@ -199,9 +225,6 @@
     t.className = 'toast ' + (kind === 'success' ? 'toast-success' : kind === 'warn' ? 'toast-warn' : 'toast-error');
     t.textContent = msg;
     document.body.appendChild(t);
-    // Errors get more time on screen than success/warn - now that they're
-    // bigger and easier to notice, they also need to be readable, not just
-    // flash past a volunteer mid-scan.
     setTimeout(() => t.remove(), kind === 'success' ? 2400 : 3600);
   }
 
@@ -406,10 +429,25 @@
         <div class="scanner-video-wrap">
           <video id="${idPrefix}Video" playsinline muted autoplay></video>
           <div class="scan-frame" id="${idPrefix}Frame"></div>
+          <div class="scan-result-flash" id="${idPrefix}ResultFlash"></div>
         </div>
         <div class="scanner-status" id="${idPrefix}Status">Starting camera…</div>
       </div>
     `;
+  }
+
+  // Shows the actual board() outcome right on top of the camera preview -
+  // where the volunteer's eyes already are - instead of a separate summary
+  // area they might not be looking at. success=true just needs a quick,
+  // wordless pulse; failures stay up long enough to actually read the
+  // message, since that's the whole point.
+  function showScanResultFlash(idPrefix, success, message) {
+    const el = document.getElementById(`${idPrefix}ResultFlash`);
+    if (!el) return;
+    el.className = `scan-result-flash show ${success ? 'success' : 'error'}`;
+    el.innerHTML = success ? icon('check', 34) : `<div>${escapeHtml(message)}</div>`;
+    clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => { el.className = 'scan-result-flash'; }, success ? 700 : 2600);
   }
 
   function wireManualToggle(toggleId, wrapId, inputId) {
@@ -457,6 +495,28 @@
     });
   }
 
+  // VCC-only: sends an already-arrived bus straight back to Premium Lounge.
+  // Creates the R1 trip directly as "departed" (immediate: true) since it's
+  // an empty bus with no riders to board.
+  function wireSendToCentralButtons(token, onDone) {
+    document.querySelectorAll('[data-send-to-central]').forEach(el => {
+      el.onclick = (ev) => {
+        ev.stopPropagation();
+        const licensePlate = el.dataset.licensePlate;
+        showConfirmModal(`Send ${licensePlate} back to Premium Lounge?`, 'Send Bus', async () => {
+          try {
+            await api(token, '/trips', {
+              method: 'POST',
+              body: JSON.stringify({ leg: 'R1', licensePlate, destination: 'central', immediate: true }),
+            });
+            showToast('Bus sent to Premium Lounge', 'success');
+            onDone();
+          } catch (e) { showToast(e.message); }
+        });
+      };
+    });
+  }
+
   // Whether the currently active top-level tab has a logged-in session, and
   // that session's own logout function - used to show/wire a single sign-out
   // button in the sticky header (same placement as volunteer.html/admin.html)
@@ -483,8 +543,8 @@
         <div style="font-size:11px;text-transform:uppercase;font-weight:700;color:#756c5a;margin-bottom:6px;letter-spacing:0.3px;">Select your current location</div>
         <div class="tabs">
           <div class="tab ${activeRoleTab === 'hub' ? 'active' : ''}" data-role-tab="hub">Hubs</div>
-          <div class="tab ${activeRoleTab === 'central' ? 'active' : ''}" data-role-tab="central">Central</div>
-          <div class="tab ${activeRoleTab === 'venue' ? 'active' : ''}" data-role-tab="venue">Venue</div>
+          <div class="tab ${activeRoleTab === 'central' ? 'active' : ''}" data-role-tab="central">Premium Lounge</div>
+          <div class="tab ${activeRoleTab === 'venue' ? 'active' : ''}" data-role-tab="venue">VCC</div>
         </div>
         <div id="roleArea"></div>
       </main>
@@ -527,6 +587,8 @@
   let hubActiveTripId = null;
   let hubShowNewTripForm = false;
   let hubLastScannedCode = null;
+  let hubOpenedAt = null; // set from GET /hubs for the active hub - null means not yet opened
+  let hubClosedAt = null; // set from GET /hubs for the active hub - null means open
 
   function initActiveHub() {
     if (!hubUser || !hubUser.hubs || !hubUser.hubs.length) { activeHubId = null; return; }
@@ -608,7 +670,14 @@
   async function renderHubDepartTab() {
     renderHubShell(`<div class="card"><div class="empty">Loading trips…</div></div>`);
     try {
-      hubTrips = await api(hubToken, '/trips?leg=O1&side=origin&origin=' + encodeURIComponent(activeHubId));
+      const [trips, hubs] = await Promise.all([
+        api(hubToken, '/trips?leg=O1&side=origin&origin=' + encodeURIComponent(activeHubId)),
+        api(hubToken, '/hubs'),
+      ]);
+      hubTrips = trips;
+      const thisHub = hubs.find(h => h.id === activeHubId);
+      hubOpenedAt = thisHub ? thisHub.openedAt : null;
+      hubClosedAt = thisHub ? thisHub.closedAt : null;
     } catch (e) { showToast(e.message); return; }
     hubActiveTripId = null;
     renderHubTripPicker();
@@ -616,12 +685,22 @@
 
   function renderHubTripPicker() {
     renderHubShell(`
-      <button class="btn btn-primary" id="hubNewTripBtn" style="margin-bottom:10px;">${icon('bus', 15)} New Trip</button>
+      ${!hubOpenedAt && !hubClosedAt ? `
+        <button class="btn btn-primary" id="hubOpenBtn" style="margin-bottom:10px;background:#166534;">${icon('check', 15)} Open This Hub for the Day</button>
+      ` : ''}
+      ${hubOpenedAt && !hubClosedAt ? `
+        <div class="meta" style="text-align:center;margin-bottom:10px;color:#756c5a;font-size:12px;">Opened at ${escapeHtml(formatShortTime(hubOpenedAt))}</div>
+      ` : ''}
+      ${hubClosedAt ? `
+        <div class="card" style="text-align:center;color:#756c5a;">This hub is closed for the day.</div>
+      ` : !hubOpenedAt ? `
+        <div class="card" style="text-align:center;color:#756c5a;">Open the hub above before creating a trip.</div>
+      ` : `<button class="btn btn-primary" id="hubNewTripBtn" style="margin-bottom:10px;">${icon('bus', 15)} New Trip</button>`}
       ${hubShowNewTripForm ? `
         <div class="card" style="margin-bottom:10px;">
           <label>Destination</label>
           <select id="hubNewTripDestination">
-            <option value="central">Central</option>
+            <option value="central">Premium Lounge</option>
             <option value="venue">VCC</option>
           </select>
           <label>License Plate</label>
@@ -635,6 +714,7 @@
           ${sortTripsForDepartureList(hubTrips).map(t => tripCardHtml(t, { clickable: t.status === 'scheduled' || t.status === 'boarding', destinationLabel: hubDestinationLabel(t.destination) })).join('')}
         </div>
       ` : '<div class="card"><div class="empty">No trips yet for this hub.</div></div>'}
+      ${hubOpenedAt && !hubClosedAt ? `<button class="btn btn-danger" id="hubCloseBtn" style="margin-top:10px;">${icon('bus', 15)} Close This Hub for the Day</button>` : ''}
     `);
     document.querySelectorAll('[data-trip]').forEach(el => {
       el.onclick = () => {
@@ -643,7 +723,17 @@
       };
     });
     wireLicensePlateInput('hubNewTripPlate');
-    document.getElementById('hubNewTripBtn').onclick = () => {
+    const openBtn = document.getElementById('hubOpenBtn');
+    if (openBtn) openBtn.onclick = async () => {
+      try {
+        await api(hubToken, `/hubs/${encodeURIComponent(activeHubId)}/open`, { method: 'POST' });
+        feedback(true);
+        showToast('Hub opened', 'success');
+        renderHubDepartTab();
+      } catch (e) { showToast(e.message); }
+    };
+    const newTripBtn = document.getElementById('hubNewTripBtn');
+    if (newTripBtn) newTripBtn.onclick = () => {
       hubShowNewTripForm = !hubShowNewTripForm;
       renderHubTripPicker();
       if (hubShowNewTripForm) document.getElementById('hubNewTripPlate').focus();
@@ -661,6 +751,23 @@
         hubActiveTripId = trip.id;
         renderHubBoardingScreen();
       } catch (e) { showToast(e.message); }
+    };
+    const closeBtn = document.getElementById('hubCloseBtn');
+    if (closeBtn) closeBtn.onclick = () => {
+      // Not a hard block (a volunteer might have a real reason to close
+      // anyway - a bus that's cancelled and never leaving, for instance),
+      // just a loud heads-up when the data itself suggests it's too early.
+      const notDeparted = hubTrips.filter(t => t.status === 'scheduled' || t.status === 'boarding').length;
+      const message = notDeparted > 0
+        ? `⚠️ ${notDeparted} bus${notDeparted === 1 ? ' has' : 'es have'} not departed yet. Please only close the hub if all the buses have departed. Close anyway?`
+        : 'Please only close the hub if all the buses have departed. Close this hub?';
+      showConfirmModal(message, 'Close Hub', async () => {
+        try {
+          await api(hubToken, `/hubs/${encodeURIComponent(activeHubId)}/close`, { method: 'POST' });
+          showToast('Hub closed', 'success');
+          renderHubDepartTab();
+        } catch (e) { showToast(e.message); }
+      });
     };
   }
 
@@ -683,7 +790,10 @@
       ${canBoard ? `
         <button class="manual-toggle" id="hubManualToggle">Enter code manually instead</button>
         <div id="hubManualWrap" style="display:none;">
-          <div class="card"><input id="hubBoardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
+          <div class="card">
+            <input id="hubBoardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" />
+            <div id="hubManualError" style="color:#B91C1C;font-weight:700;font-size:13px;text-align:center;margin-top:8px;min-height:17px;"></div>
+          </div>
         </div>
       ` : ''}
       ${canBoard ? `
@@ -803,11 +913,17 @@
     });
   }
 
+  function setHubManualError(msg) {
+    const el = document.getElementById('hubManualError');
+    if (el) el.textContent = msg || '';
+  }
+
   async function handleHubBoard(code, fromCamera) {
     if (!code) return;
+    if (!fromCamera) setHubManualError('');
     if (fromCamera && !isValidTicketCode(code)) {
       feedback(false);
-      showToast('Not a valid ticket code');
+      showScanResultFlash('hubBoard', false, 'Not a valid ticket code');
       return;
     }
     code = formatTicketCode(code);
@@ -831,18 +947,22 @@
         const deleteBtn = document.getElementById('hubDeleteTripBtn');
         if (deleteBtn) deleteBtn.remove();
       }
+      if (fromCamera) showScanResultFlash('hubBoard', true);
       if (updated.timeslotWarning) {
         const dir = updated.timeslotWarning.minutesLate > 0 ? 'late' : 'early';
         const mins = Math.abs(updated.timeslotWarning.minutesLate);
         showToast(`${formatTicketCode(code)} checked in — their ${formatSlotClock(updated.timeslotWarning.departureTime)} timeslot is ${mins} min ${dir}`, 'warn');
       } else if (updated.issuedStandby) {
         showToast(`${formatTicketCode(code)} — new standby ticket issued & checked in`, 'success');
+      } else if (updated.switchedFromTrip) {
+        showToast(`${formatTicketCode(code)} moved to this bus`, 'success');
       } else {
         showToast(`${formatTicketCode(code)} checked in`, 'success');
       }
     } catch (e) {
       feedback(false);
-      showToast(e.message);
+      if (fromCamera) showScanResultFlash('hubBoard', false, e.message);
+      else setHubManualError(e.message);
     }
   }
 
@@ -895,7 +1015,7 @@
     document.getElementById('roleArea').innerHTML = roleShellHtml({
       subTabsHtml: `
         <div class="tab ${centralSubTab === 'arrive' ? 'active' : ''}" data-central-subtab="arrive">Arrivals</div>
-        <div class="tab ${centralSubTab === 'toVenue' ? 'active' : ''}" data-central-subtab="toVenue">Send to Venue</div>
+        <div class="tab ${centralSubTab === 'toVenue' ? 'active' : ''}" data-central-subtab="toVenue">Send to VCC</div>
         <div class="tab ${centralSubTab === 'toHub' ? 'active' : ''}" data-central-subtab="toHub">Send to Hub</div>
       `,
       bodyId: 'centralBody', bodyHtml,
@@ -990,7 +1110,7 @@
   function renderCentralBoardingScreen() {
     const trip = centralTrips.find(t => t.id === centralActiveTripId);
     const canBoard = trip.status === 'scheduled' || trip.status === 'boarding';
-    const destLabel = `to ${escapeHtml(trip.destination)}`;
+    const destLabel = `to ${escapeHtml(prettyLocation(trip.destination))}`;
     const createdLabel = trip.createdAt ? 'Created ' + formatShortTime(trip.createdAt) : '';
     centralLastScannedCode = null;
     renderCentralShell(`
@@ -1006,9 +1126,13 @@
       ${canBoard ? `
         <button class="manual-toggle" id="centralManualToggle">Enter code manually instead</button>
         <div id="centralManualWrap" style="display:none;">
-          <div class="card"><input id="centralBoardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" /></div>
+          <div class="card">
+            <input id="centralBoardInput" class="scan-input" autocomplete="off" placeholder="Type ticket code, then Enter" />
+            <div id="centralManualError" style="color:#B91C1C;font-weight:700;font-size:13px;text-align:center;margin-top:8px;min-height:17px;"></div>
+          </div>
         </div>
       ` : ''}
+      ${canBoard && trip.leg === 'R2' ? `<button class="btn btn-outline" id="centralVirtualTicketBtn" style="margin-top:10px;">${icon('check', 15)} Issue Virtual Ticket &amp; Board</button>` : ''}
       ${canBoard ? `
         <div style="position:sticky;bottom:0;background:#FFFFFF;padding:10px 0 max(10px, env(safe-area-inset-bottom));border-top:1px solid #E8E1D3;margin-top:10px;">
           <button class="btn btn-danger" id="centralDepartBtn" ${trip.onboard < 1 ? 'disabled' : ''} style="${trip.onboard < 1 ? 'opacity:0.4;' : ''}">Complete &amp; Depart</button>
@@ -1022,6 +1146,11 @@
       stopActiveScanner();
       centralActiveTripId = null;
       if (trip.leg === 'R2') renderCentralToHubTab(); else renderCentralToVenueTab();
+    };
+
+    const virtualTicketBtn = document.getElementById('centralVirtualTicketBtn');
+    if (virtualTicketBtn) virtualTicketBtn.onclick = () => {
+      showConfirmModal('Issue a new virtual ticket and board it on this bus?', 'Issue & Board', handleCentralIssueVirtualTicket);
     };
 
     const editPlateBtn = document.getElementById('centralEditPlateBtn');
@@ -1113,11 +1242,45 @@
     });
   }
 
+  // R2 only: issues a brand-new standby ticket with a server-generated code
+  // (no scan/type needed at all) and boards it in one step - for a rider who
+  // has no code whatsoever, not even a lost physical ticket to scan.
+  async function handleCentralIssueVirtualTicket() {
+    try {
+      const updated = await api(centralToken, `/trips/${centralActiveTripId}/board`, { method: 'POST', body: JSON.stringify({ virtual: true }) });
+      centralTrips = centralTrips.map(t => (t.id === centralActiveTripId ? updated : t));
+      feedback(true);
+      centralLastScannedCode = updated.virtualCode;
+      const ringWrap = document.getElementById('centralOnboardRingWrap');
+      if (ringWrap) ringWrap.innerHTML = onboardRing(updated.onboard, 160);
+      updateCentralScanLog();
+      const departBtn = document.getElementById('centralDepartBtn');
+      if (departBtn) {
+        departBtn.disabled = updated.onboard < 1;
+        departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
+      }
+      if (updated.status !== 'scheduled') {
+        const deleteBtn = document.getElementById('centralDeleteTripBtn');
+        if (deleteBtn) deleteBtn.remove();
+      }
+      showToast(`Virtual ticket ${formatTicketCode(updated.virtualCode)} issued & checked in`, 'success');
+    } catch (e) {
+      feedback(false);
+      showToast(e.message);
+    }
+  }
+
+  function setCentralManualError(msg) {
+    const el = document.getElementById('centralManualError');
+    if (el) el.textContent = msg || '';
+  }
+
   async function handleCentralBoard(code, fromCamera, standbyHubId, force) {
     if (!code) return;
+    if (!fromCamera) setCentralManualError('');
     if (fromCamera && !isValidTicketCode(code)) {
       feedback(false);
-      showToast('Not a valid ticket code');
+      showScanResultFlash('centralBoard', false, 'Not a valid ticket code');
       return;
     }
     code = formatTicketCode(code);
@@ -1141,7 +1304,12 @@
         const deleteBtn = document.getElementById('centralDeleteTripBtn');
         if (deleteBtn) deleteBtn.remove();
       }
-      showToast(`${formatTicketCode(code)} checked in`, 'success');
+      if (fromCamera) showScanResultFlash('centralBoard', true);
+      if (updated.switchedFromTrip) {
+        showToast(`${formatTicketCode(code)} moved to this bus`, 'success');
+      } else {
+        showToast(`${formatTicketCode(code)} checked in`, 'success');
+      }
     } catch (e) {
       feedback(false);
       // O2 walk-up standby: this leg has no hub implied by the trip itself,
@@ -1163,7 +1331,8 @@
         });
         return;
       }
-      showToast(e.message, 'error');
+      if (fromCamera) showScanResultFlash('centralBoard', false, e.message);
+      else setCentralManualError(e.message);
     }
   }
 
@@ -1246,9 +1415,10 @@
   }
 
   // ============================================================ VENUE ====
-  // Venue only handles arrivals (O2, plus any O1 hub bus sent straight to
-  // VCC) - R1 (Venue->Central) trip creation is no longer part of this
-  // role, so there's no sub-tab bar here, unlike Hub/Central.
+  // Venue handles arrivals (O2, plus any O1 hub bus sent straight to VCC),
+  // plus one self-service action on an already-arrived bus: send it straight
+  // back to Premium Lounge (R1) - no separate sub-tab, just a button on the
+  // arrived card itself (see showSendToCentral/wireSendToCentralButtons).
   let venueToken = localStorage.getItem('venue_token');
   let venueUser = JSON.parse(localStorage.getItem('venue_user') || 'null');
   let venueArrivalTrips = [];
@@ -1309,9 +1479,10 @@
 
   function renderVenueArrivalsList() {
     renderVenueShell(`
-      ${venueArrivalTrips.length ? venueArrivalTrips.map(t => tripCardHtml(t, { clickable: false, showRoute: true, isArrivalList: true })).join('') : '<div class="card"><div class="empty">No buses en route right now.</div></div>'}
+      ${venueArrivalTrips.length ? venueArrivalTrips.map(t => tripCardHtml(t, { clickable: false, showRoute: true, isArrivalList: true, showSendToCentral: true })).join('') : '<div class="card"><div class="empty">No buses en route right now.</div></div>'}
     `);
     wireMarkArrivedButtons(venueToken, venueArrivalTrips, () => renderVenueArriveTab());
+    wireSendToCentralButtons(venueToken, () => renderVenueArriveTab());
   }
 
   renderApp();
