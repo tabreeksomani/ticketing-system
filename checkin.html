@@ -10,7 +10,8 @@
   html, body { margin: 0; padding: 0; min-height: 100vh; background: #FFFFFF; color: #241C10; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
   header { position: sticky; top: 0; z-index: 5; background: #FFFFFF; border-bottom: 1px solid #E8E1D3; padding: max(14px, env(safe-area-inset-top)) 16px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   header .title { font-weight: 800; font-size: 16px; font-family: 'Palatino Linotype', Georgia, serif; color: #241C10; }
-  header button { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 9px 12px; cursor: pointer; min-height: 40px; }
+  header button, header #homeBtn { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 9px 12px; cursor: pointer; min-height: 40px; }
+  header #homeBtn { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
   main { padding: 14px; max-width: 480px; margin: 0 auto; padding-bottom: 40px; }
   .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
   .tab { flex: 1; text-align: center; padding: 11px 4px; border-radius: 10px; background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; cursor: pointer; font-size: 12px; font-weight: 700; min-height: 44px; display: flex; align-items: center; justify-content: center; }
@@ -155,6 +156,7 @@
     check: '<path d="M5 13l4 4L19 7"/>',
     bus: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 11h18M8 6v5M16 6v5"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="16.5" cy="19" r="1.5"/>',
     swap: '<path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/>',
+    home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11h14V9"/>',
   };
   function icon(name, size) {
     size = size || 16;
@@ -688,13 +690,18 @@
 
   // VCC-only: sends an already-arrived bus straight back to Premium Lounge.
   // Creates the R1 trip directly as "departed" (immediate: true) since it's
-  // an empty bus with no riders to board.
+  // an empty bus with no riders to board. Once sent, the bus is en route back
+  // and drops off the arrivals list on the next refresh (see renderVenueArriveTab).
   function wireSendToCentralButtons(token, onDone) {
     document.querySelectorAll('[data-send-to-central]').forEach(el => {
       el.onclick = (ev) => {
         ev.stopPropagation();
         const licensePlate = el.dataset.licensePlate;
         showConfirmModal(`Send ${licensePlate} back to Premium Lounge?`, 'Send Bus', async () => {
+          // Disable right away so a double-tap can't spawn a second R1 trip
+          // before the list re-renders and drops this card.
+          if (el.disabled) return;
+          el.disabled = true;
           try {
             await api(token, '/trips', {
               method: 'POST',
@@ -702,7 +709,7 @@
             });
             showToast('Bus sent to Premium Lounge', 'success');
             onDone();
-          } catch (e) { showToast(e.message); }
+          } catch (e) { el.disabled = false; showToast(e.message); }
         });
       };
     });
@@ -728,7 +735,10 @@
     document.getElementById('app').innerHTML = `
       <header>
         <div class="title">${icon('bus', 18)} Check-in</div>
-        ${activeRoleLoggedIn() ? `<button id="topLogoutBtn">Sign out</button>` : ''}
+        <div style="display:flex;gap:8px;">
+          <a href="index.html" id="homeBtn">${icon('home', 14)} Home</a>
+          ${activeRoleLoggedIn() ? `<button id="topLogoutBtn">Sign out</button>` : ''}
+        </div>
       </header>
       <main>
         <div style="font-size:11px;text-transform:uppercase;font-weight:700;color:#756c5a;margin-bottom:6px;letter-spacing:0.3px;">Select your current location</div>
@@ -1669,11 +1679,20 @@
     try {
       // O2 (Central->Venue) is the normal path; O1 shows up here too for any
       // hub bus a volunteer sent straight to VCC instead of via Central.
-      const [o2, o1Direct] = await Promise.all([
+      // R1 (Venue->Central) is our own outbound "sent back" leg - we fetch it
+      // only to drop already-turned-around buses from the arrivals list below.
+      const [o2, o1Direct, r1Out] = await Promise.all([
         api(venueToken, '/trips?leg=O2&side=arrival'),
         api(venueToken, '/trips?leg=O1&side=arrival'),
+        api(venueToken, '/trips?leg=R1&side=origin'),
       ]);
-      venueArrivalTrips = [...o2, ...o1Direct];
+      // A bus with an in-progress R1 (departed, not yet arrived at Central) has
+      // already been sent back and is en route - hide its arrival card so it
+      // can't be sent a second time, even after a refresh.
+      const enRouteBack = new Set(
+        r1Out.filter(t => t.status === 'departed').map(t => t.licensePlate)
+      );
+      venueArrivalTrips = [...o2, ...o1Direct].filter(t => !enRouteBack.has(t.licensePlate));
     } catch (e) { showToast(e.message); return; }
     renderVenueArrivalsList();
   }
