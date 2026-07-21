@@ -61,7 +61,7 @@
   /* ---- camera scanner ---- */
   .scanner-card { padding: 0; overflow: hidden; position: relative; }
   .scanner-video-wrap { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; overflow: hidden; }
-  .scanner-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .scanner-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; transform: translate3d(0,0,0); will-change: transform; backface-visibility: hidden; }
   .scan-frame { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 62%; aspect-ratio: 1; border: 3px solid rgba(140,115,76,0.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0,0,0,0.35); pointer-events: none; }
   .scan-frame.flash { border-color: #22c55e; border-width: 3px; }
   .scanner-status { padding: 10px 14px; font-size: 12px; color: #756c5a; text-align: center; background: #FFFFFF; }
@@ -109,6 +109,7 @@
     arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
     check: '<path d="M5 13l4 4L19 7"/>',
     bus: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 11h18M8 6v5M16 6v5"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="16.5" cy="19" r="1.5"/>',
+    swap: '<path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/>',
   };
   function icon(name, size) {
     size = size || 16;
@@ -349,6 +350,26 @@
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const recent = new Map();
+    let videoDevices = [];
+    let currentDeviceIndex = -1;
+    const idPrefix = videoEl.id ? videoEl.id.replace('Video', '') : '';
+
+    // Detect if device is older or lower-spec
+    const isLowSpec = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
+                      (navigator.deviceMemory && navigator.deviceMemory <= 3) ||
+                      (/Chrome\/([0-9]+)/.test(navigator.userAgent) && parseInt(RegExp.$1, 10) < 65);
+
+    // Dynamic stream configuration
+    const videoConstraints = isLowSpec ? {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      frameRate: { ideal: 12, max: 15 }
+    } : {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    };
 
     function setStatus(msg, warn) {
       if (!statusEl) return;
@@ -367,13 +388,120 @@
         return;
       }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
         videoEl.srcObject = stream;
         await videoEl.play();
         setStatus('');
         loop();
+
+        // Enumerate devices once permission is granted
+        await initDevices();
       } catch (e) {
         setStatus('Camera access denied — use manual entry below, or allow camera access and reload.', true);
+      }
+    }
+
+    async function initDevices() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        if (videoDevices.length > 1) {
+          // Identify the current track device ID or label
+          const activeTrack = stream ? stream.getVideoTracks()[0] : null;
+          let activeId = null;
+          let activeLabel = null;
+
+          if (activeTrack) {
+            activeLabel = activeTrack.label;
+            if (activeTrack.getSettings) {
+              const settings = activeTrack.getSettings();
+              activeId = settings ? settings.deviceId : null;
+            }
+          }
+
+          // Match the active track to find our current index
+          currentDeviceIndex = videoDevices.findIndex(d => {
+            if (activeId && d.deviceId) return d.deviceId === activeId;
+            if (activeLabel && d.label) return d.label === activeLabel;
+            return false;
+          });
+
+          // If current selection is front camera, check if there's a back/rear camera to auto-switch to
+          const isFront = activeLabel && (activeLabel.toLowerCase().includes('front') || activeLabel.toLowerCase().includes('user'));
+          if (currentDeviceIndex === -1 || isFront) {
+            const backIndex = videoDevices.findIndex(d => {
+              const label = (d.label || '').toLowerCase();
+              return label.includes('back') || label.includes('rear') || label.includes('environment') || label.includes('camera 1') || label.includes('main');
+            });
+            if (backIndex !== -1 && backIndex !== currentDeviceIndex) {
+              await switchCamera(backIndex);
+              return;
+            }
+          }
+
+          // Show the switch button since multiple cameras exist
+          const switchBtn = document.getElementById(idPrefix + 'SwitchCameraBtn');
+          if (switchBtn) {
+            switchBtn.style.display = 'flex';
+            switchBtn.onclick = async () => {
+              if (videoDevices.length > 1) {
+                const nextIndex = (currentDeviceIndex + 1) % videoDevices.length;
+                await switchCamera(nextIndex);
+              }
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to enumerate devices:', err);
+      }
+    }
+
+    async function switchCamera(index) {
+      currentDeviceIndex = index;
+      const device = videoDevices[index];
+      if (!device) return;
+
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+
+      const switchConstraints = isLowSpec ? {
+        deviceId: { exact: device.deviceId },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 12, max: 15 }
+      } : {
+        deviceId: { exact: device.deviceId },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      };
+
+      try {
+        setStatus('Switching camera…');
+        stream = await navigator.mediaDevices.getUserMedia({ video: switchConstraints });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        setStatus('');
+      } catch (err) {
+        console.error('Failed to switch camera:', err);
+        setStatus('Failed to switch camera. Retrying...', true);
+        try {
+          const fallbackConstraints = isLowSpec ? {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 12, max: 15 }
+          } : {
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          };
+          stream = await navigator.mediaDevices.getUserMedia({ video: fallbackConstraints });
+          videoEl.srcObject = stream;
+          await videoEl.play();
+          setStatus('');
+        } catch (e) {
+          setStatus('Camera error.', true);
+        }
       }
     }
 
@@ -381,35 +509,53 @@
     function loop() {
       if (stopped) return;
       if (!paused && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-        canvas.width = videoEl.videoWidth;
-        canvas.height = videoEl.videoHeight;
-        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-        try {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-          if (result && result.data) {
-            const now = Date.now();
-            if (!recent.has(result.data) || now - recent.get(result.data) > 2000) {
-              recent.set(result.data, now);
-              if (frameEl) {
-                frameEl.classList.add('flash');
-                setTimeout(() => {
-                  if (stopped) return;
-                  paused = true;
-                  videoEl.pause();
-                }, 500);
-                setTimeout(() => {
-                  frameEl.classList.remove('flash');
-                  paused = false;
-                  if (!stopped) videoEl.play().catch(() => {});
-                }, 1000);
-              }
-              onDecode(result.data);
-            }
+        // Downscale dynamically based on device specs (384px for low-spec to preserve QR detail)
+        const maxDim = isLowSpec ? 384 : 480;
+        let w = videoEl.videoWidth;
+        let h = videoEl.videoHeight;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
           }
-        } catch (e) {}
+        }
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(videoEl, 0, 0, w, h);
+
+        // Defer readback to yield execution and prevent WebRTC GPU-to-CPU pipeline stalls
+        setTimeout(() => {
+          try {
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+            if (result && result.data) {
+              const now = Date.now();
+              if (!recent.has(result.data) || now - recent.get(result.data) > 2000) {
+                recent.set(result.data, now);
+                if (frameEl) {
+                  frameEl.classList.add('flash');
+                  setTimeout(() => {
+                    if (stopped) return;
+                    paused = true;
+                    videoEl.pause();
+                  }, 500);
+                  setTimeout(() => {
+                    frameEl.classList.remove('flash');
+                    paused = false;
+                    if (!stopped) videoEl.play().catch(() => {});
+                  }, 1000);
+                }
+                onDecode(result.data);
+              }
+            }
+          } catch (e) {}
+        }, 0);
       }
-      requestAnimationFrame(loop);
+      // Modern: 120ms (8 Hz), Low-spec: 200ms (5 Hz)
+      setTimeout(loop, isLowSpec ? 200 : 120);
     }
 
     function stop() {
@@ -425,7 +571,7 @@
 
   function scannerCardHtml(idPrefix) {
     return `
-      <div class="card scanner-card">
+      <div class="card scanner-card" style="position:relative;">
         <div class="scanner-video-wrap">
           <video id="${idPrefix}Video" playsinline muted autoplay></video>
           <div class="scan-frame" id="${idPrefix}Frame"></div>
@@ -619,7 +765,7 @@
     document.getElementById('roleArea').innerHTML = `
       <div class="card login-card">
         <label>Login</label>
-        <select id="hubLoginSelect">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.hubNames.length ? l.hubNames.join(', ') : l.name)}</option>`).join('')}</select>
+        <select id="hubLoginSelect">${logins.map(l => `<option value="${l.id}">${escapeHtml(l.id)}</option>`).join('')}</select>
         <label>Password</label>
         <input id="hubLoginPass" type="password" />
         <button class="btn btn-primary" id="hubLoginBtn">Sign in</button>

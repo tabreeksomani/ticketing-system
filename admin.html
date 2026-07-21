@@ -2062,10 +2062,16 @@
   // it's the live phone-width Sales tab where vertical bars get squeezed
   // thin past ~8-10 hubs, not a screenshot rendered at report width).
   let reportData = null;
+  let reportDailyData = null;
 
   async function renderReportTab() {
     showLoadingIfEmpty();
-    try { reportData = await api('/dashboard/sales'); } catch (e) { showToast(e.message); return; }
+    try {
+      [reportData, reportDailyData] = await Promise.all([
+        api('/dashboard/sales'),
+        api('/dashboard/daily-sales'),
+      ]);
+    } catch (e) { showToast(e.message); return; }
     renderReportHtml();
   }
 
@@ -2084,6 +2090,7 @@
 
   function renderReportHtml() {
     const data = reportData;
+    const daily = reportDailyData;
     const totalSold = data.reduce((s, h) => s + h.totalSold, 0);
     const totalAdult = data.reduce((s, h) => s + h.totalAdult, 0);
     const totalChild = data.reduce((s, h) => s + h.totalChild, 0);
@@ -2124,8 +2131,27 @@
           <div style="flex:1 1 200px; min-width:0;">${verticalStackedBarChart(data)}</div>
           <div style="flex:0 1 140px;">${verticalStackedBarLegend(data)}</div>
         </div>
+        <div style="border-top:1px solid #D9D3C4; margin:40px 0 24px;"></div>
+        <div style="margin-top:28px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+            <div style="font-size:11px; font-weight:700; letter-spacing:0.4px; color:#756c5a;">TABLE — HUB × DATE-OF-SALE</div>
+            <button id="copyDateTableBtn" style="background:#8C734C; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer;">Copy for spreadsheet</button>
+          </div>
+          <div style="overflow-x:auto;">${salesByDateTableHtml(data, daily)}</div>
+        </div>
       </div>
     `);
+
+    const copyBtn = document.getElementById('copyDateTableBtn');
+    if (copyBtn) copyBtn.onclick = async () => {
+      const tsv = salesByDateMatrix(reportData, reportDailyData).map(row => row.join('\t')).join('\n');
+      try {
+        await navigator.clipboard.writeText(tsv);
+        showToast('Copied — paste into a spreadsheet');
+      } catch (e) {
+        showToast('Copy failed: ' + e.message);
+      }
+    };
   }
 
   // Vertical orientation, deliberately separate from the existing (horizontal)
@@ -2220,6 +2246,135 @@
         </div>
       `).join('')}
     `;
+  }
+
+  // Calendar days present in the data, chronological. Day strings are
+  // "YYYY-MM-DD" (already Pacific-time buckets from the backend), so plain
+  // lexicographic sort is chronological - the date-of-sale analog of
+  // sortedTimeslotLabels for the by-time chart.
+  function sortedSaleDays(dailyRows) {
+    const days = [];
+    dailyRows.forEach(r => { if (!days.includes(r.day)) days.push(r.day); });
+    return days.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  }
+
+  // "2026-07-19" -> "Jul 19". Parsed by hand (not new Date()) to avoid the
+  // UTC-midnight-shifts-the-day trap that would misdate a Pacific day string.
+  function formatSaleDay(dayStr) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const parts = String(dayStr).split('-');
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    return `${MONTHS[(m || 1) - 1]} ${d}`;
+  }
+
+  // Hub × date-of-sale ticket counts, laid out as a plain grid.
+  // salesByDateMatrix is the single source of truth - a 2D array
+  // of [header row, one row per hub, totals row] - that both the on-screen
+  // table and the tab-separated clipboard export are built from, so the two
+  // can never drift apart.
+  function salesByDateMatrix(hubs, dailyRows) {
+    const allDays = sortedSaleDays(dailyRows);
+    const byHub = {}; // hubId -> { day -> count }
+    dailyRows.forEach(r => {
+      const days = byHub[r.hubId] || (byHub[r.hubId] = {});
+      days[r.day] = (days[r.day] || 0) + r.count;
+    });
+
+    const header = ['Hub', ...allDays.map(formatSaleDay), 'Total'];
+    const rows = hubs.map(h => {
+      const days = byHub[h.hubId] || {};
+      const counts = allDays.map(d => days[d] || 0);
+      return [h.hubName, ...counts, counts.reduce((a, b) => a + b, 0)];
+    });
+    const colTotals = allDays.map(d => hubs.reduce((s, h) => s + ((byHub[h.hubId] || {})[d] || 0), 0));
+    const footer = ['Total', ...colTotals, colTotals.reduce((a, b) => a + b, 0)];
+    return [header, ...rows, footer];
+  }
+
+  function salesByDateTableHtml(hubs, dailyRows) {
+    const matrix = salesByDateMatrix(hubs, dailyRows);
+    const cell = (val, i, opts) => {
+      const align = i === 0 ? 'left' : 'right';
+      const weight = opts.strong ? '700' : '400';
+      const bg = opts.head ? '#EFEBE1' : (opts.foot ? '#F2EFE6' : '#fff');
+      const tag = opts.head ? 'th' : 'td';
+      return `<${tag} style="border:1px solid #D9D3C4; padding:6px 10px; text-align:${align}; font-size:12px; font-weight:${weight}; color:#241C10; background:${bg}; white-space:nowrap;">${escapeHtml(String(val))}</${tag}>`;
+    };
+    const [header, ...body] = matrix;
+    const footer = body.pop();
+    return `
+      <table style="border-collapse:collapse; background:#fff;">
+        <thead><tr>${header.map((v, i) => cell(v, i, { head: true, strong: true })).join('')}</tr></thead>
+        <tbody>${body.map(row => `<tr>${row.map((v, i) => cell(v, i, { strong: i === 0 })).join('')}</tr>`).join('')}</tbody>
+        <tfoot><tr>${footer.map((v, i) => cell(v, i, { foot: true, strong: true })).join('')}</tr></tfoot>
+      </table>
+    `;
+  }
+
+  // =========================================================== TRANSPORT ====
+  async function renderTransportTab() {
+    showLoadingIfEmpty();
+    let data;
+    try { data = await api('/dashboard/transport'); } catch (e) { showToast(e.message); return; }
+
+    const all = [...data.scheduled, ...data.boarding, ...data.departed, ...data.arrived];
+    const totalCapacity = all.reduce((s, b) => s + b.capacity, 0);
+    const totalOnboard = all.reduce((s, b) => s + b.onboard, 0);
+
+    function busRing(b, ringColor) {
+      const pct = b.capacity > 0 ? b.onboard / b.capacity : 0;
+      return `
+        <div class="ring-row" style="padding:8px 0; border-top:1px solid #E8E1D3;">
+          ${donutRing(pct, { size: 44, stroke: 5, color: ringColor, fontSize: 9, label: `${b.onboard}/${b.capacity}` })}
+          <div class="ring-info">
+            <div class="ring-name" style="font-size:13px;">${escapeHtml(b.hubName)} — ${escapeHtml(b.label)}</div>
+            <div class="ring-meta">${b.onboard} of ${b.capacity}${b.standbyOnboard > 0 ? ` · ${b.standbyOnboard} standby` : ''}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    renderShell(`
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${all.length}</div><div class="stat-label">Total Buses</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value ${(`${totalOnboard}/${totalCapacity}`).length > 6 ? 'stat-value-long' : ''}">${totalOnboard}/${totalCapacity}</div><div class="stat-label">Onboard</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.arrived.length}</div><div class="stat-label">Arrived</div></div>
+        <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${data.standby.total}</div><div class="stat-label">Standby Issued</div></div>
+      </div>
+      <div class="bar-chart-wrap" style="height:150px; margin-bottom:16px;">
+        ${barChart([
+          { label: 'Scheduled', value: data.scheduled.length, color: '#57534E' },
+          { label: 'Boarding', value: data.boarding.length, color: '#f59e0b' },
+          { label: 'Departed', value: data.departed.length, color: '#8C734C' },
+          { label: 'Arrived', value: data.arrived.length, color: '#6b5636' },
+        ], { height: 100 })}
+      </div>
+
+      ${data.standby.total > 0 ? `
+        <div class="card">
+          <h2 class="section">Standby tickets issued, by hub</h2>
+          ${data.standby.byHub.map(h => `<div class="row-flex"><div>${escapeHtml(h.hubName)}</div><div>${h.count}</div></div>`).join('')}
+        </div>
+      ` : ''}
+
+      <div class="card">
+        <h2 class="section"><span class="legend-dot" style="background:#57534E;"></span>Scheduled — capacity ready, not yet boarding</h2>
+        ${data.scheduled.length ? data.scheduled.map(b => busRing(b, '#57534E')).join('') : '<div class="empty">None.</div>'}
+      </div>
+      <div class="card">
+        <h2 class="section"><span class="legend-dot" style="background:#f59e0b;"></span>Boarding now</h2>
+        ${data.boarding.length ? data.boarding.map(b => busRing(b, '#f59e0b')).join('') : '<div class="empty">None.</div>'}
+      </div>
+      <div class="card">
+        <h2 class="section"><span class="legend-dot" style="background:#8C734C;"></span>Departed — en route to central hub</h2>
+        ${data.departed.length ? data.departed.map(b => busRing(b, '#8C734C')).join('') : '<div class="empty">None.</div>'}
+      </div>
+      <div class="card">
+        <h2 class="section"><span class="legend-dot" style="background:#6b5636;"></span>Arrived at central hub</h2>
+        ${data.arrived.length ? data.arrived.map(b => busRing(b, '#6b5636')).join('') : '<div class="empty">None.</div>'}
+      </div>
+    `);
   }
 
   function loadCurrentTabBody() {
