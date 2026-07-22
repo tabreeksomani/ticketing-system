@@ -390,6 +390,22 @@
     if (activeScanner) { activeScanner.stop(); activeScanner = null; }
   }
 
+  // Live-poll timers for the boarding screens (hub + central) - refetch the
+  // active trip every few seconds so a second device scanning the same
+  // trip's onboard count/depart-eligibility shows up here too, not just on
+  // whichever device made the scan. One timer per screen since hub and
+  // central boarding can't both be open in the same tab, but keeping them
+  // separate avoids one screen's poll clobbering the other's DOM if that
+  // ever changes.
+  let hubBoardPollTimer = null;
+  let centralBoardPollTimer = null;
+  function stopHubBoardPoll() {
+    if (hubBoardPollTimer) { clearInterval(hubBoardPollTimer); hubBoardPollTimer = null; }
+  }
+  function stopCentralBoardPoll() {
+    if (centralBoardPollTimer) { clearInterval(centralBoardPollTimer); centralBoardPollTimer = null; }
+  }
+
   function startCameraScanner(videoEl, statusEl, frameEl, onDecode) {
     stopActiveScanner();
     let stopped = false;
@@ -803,6 +819,7 @@
 
   function hubLogout() {
     stopActiveScanner();
+    stopHubBoardPoll();
     localStorage.removeItem('volunteer_token'); localStorage.removeItem('volunteer_user');
     hubToken = null; hubUser = null; activeHubId = null; hubActiveTripId = null;
     renderApp();
@@ -869,6 +886,7 @@
   }
 
   async function renderHubDepartTab() {
+    stopHubBoardPoll();
     renderHubShell(`<div class="card"><div class="empty">Loading trips…</div></div>`);
     try {
       const [trips, hubs] = await Promise.all([
@@ -1068,6 +1086,40 @@
       });
     };
 
+    stopHubBoardPoll();
+    if (canBoard) hubBoardPollTimer = setInterval(pollHubOnboard, 4000);
+  }
+
+  // Refetches the active hub trip and patches just the onboard ring + depart
+  // button - not a full re-render, so it can't steal focus from the scan
+  // input or interrupt the camera scanner mid-frame. Picks up onboard-count
+  // changes made by another device scanning this same trip.
+  async function pollHubOnboard() {
+    if (!hubActiveTripId) return;
+    let updated;
+    try {
+      updated = await api(hubToken, `/trips/${hubActiveTripId}`);
+    } catch (e) { return; } // transient network hiccup - just try again next tick
+    if (hubActiveTripId === null || updated.id !== hubActiveTripId) return; // navigated away mid-request
+    hubTrips = hubTrips.map(t => (t.id === hubActiveTripId ? updated : t));
+    const ringWrap = document.getElementById('hubOnboardRingWrap');
+    if (!ringWrap) return;
+    if (ringWrap.dataset.onboard !== String(updated.onboard)) {
+      ringWrap.dataset.onboard = String(updated.onboard);
+      ringWrap.innerHTML = onboardRing(updated.onboard, 160);
+    }
+    const departBtn = document.getElementById('hubDepartBtn');
+    if (departBtn) {
+      departBtn.disabled = updated.onboard < 1;
+      departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
+    }
+    if (updated.status !== 'scheduled') {
+      const deleteBtn = document.getElementById('hubDeleteTripBtn');
+      if (deleteBtn) deleteBtn.remove();
+    }
+    if (updated.status === 'departed' || updated.status === 'arrived') {
+      stopHubBoardPoll();
+    }
   }
 
   // Formats a timeslot's raw departure_time as a plain clock time (e.g.
@@ -1180,6 +1232,7 @@
 
   function centralLogout() {
     stopActiveScanner();
+    stopCentralBoardPoll();
     localStorage.removeItem('central_token'); localStorage.removeItem('central_user');
     centralToken = null; centralUser = null; centralActiveTripId = null;
     renderApp();
@@ -1262,6 +1315,7 @@
   }
 
   async function renderCentralToVenueTab() {
+    stopCentralBoardPoll();
     renderCentralShell(`<div class="card"><div class="empty">Loading trips…</div></div>`);
     try {
       centralTrips = await api(centralToken, '/trips?leg=O2&side=origin');
@@ -1415,6 +1469,39 @@
       });
     };
 
+    stopCentralBoardPoll();
+    if (canBoard) centralBoardPollTimer = setInterval(pollCentralOnboard, 4000);
+  }
+
+  // Same idea as pollHubOnboard: refetch just this trip and patch the ring +
+  // depart button in place, so a second device boarding the same trip is
+  // reflected here without disrupting whatever's currently mid-scan.
+  async function pollCentralOnboard() {
+    if (!centralActiveTripId) return;
+    let updated;
+    try {
+      updated = await api(centralToken, `/trips/${centralActiveTripId}`);
+    } catch (e) { return; }
+    if (centralActiveTripId === null || updated.id !== centralActiveTripId) return;
+    centralTrips = centralTrips.map(t => (t.id === centralActiveTripId ? updated : t));
+    const ringWrap = document.getElementById('centralOnboardRingWrap');
+    if (!ringWrap) return;
+    if (ringWrap.dataset.onboard !== String(updated.onboard)) {
+      ringWrap.dataset.onboard = String(updated.onboard);
+      ringWrap.innerHTML = onboardRing(updated.onboard, 160);
+    }
+    const departBtn = document.getElementById('centralDepartBtn');
+    if (departBtn) {
+      departBtn.disabled = updated.onboard < 1;
+      departBtn.style.opacity = updated.onboard < 1 ? '0.4' : '1';
+    }
+    if (updated.status !== 'scheduled') {
+      const deleteBtn = document.getElementById('centralDeleteTripBtn');
+      if (deleteBtn) deleteBtn.remove();
+    }
+    if (updated.status === 'departed' || updated.status === 'arrived') {
+      stopCentralBoardPoll();
+    }
   }
 
   function updateCentralScanLog() {
@@ -1543,6 +1630,7 @@
   }
 
   async function renderCentralToHubTab() {
+    stopCentralBoardPoll();
     renderCentralShell(`<div class="card"><div class="empty">Loading trips…</div></div>`);
     try {
       centralTrips = await api(centralToken, '/trips?leg=R2&side=origin');

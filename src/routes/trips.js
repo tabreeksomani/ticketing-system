@@ -300,6 +300,20 @@ router.post('/trips', asyncHandler(async (req, res) => {
   res.status(201).json(tripRow({ ...rows[0], onboard: 0 }));
 }));
 
+// Single-trip refetch for the boarding screen's live-poll (see checkin.html)
+// - lets a device pick up onboard-count changes made by someone else
+// scanning the same trip from a different device, without a full trip-list
+// reload. Same origin-access rule as board/depart.
+router.get('/trips/:id(\\d+)', asyncHandler(async (req, res) => {
+  const user = await requireAuth(req);
+  const tripId = parseInt(req.params.id, 10);
+  const trip = await fetchTrip(tripId);
+  if (!trip) jsonError('Trip not found', 404);
+  const config = legConfig(trip.leg);
+  requireOriginAccess(user, trip, config);
+  res.json(tripRow(trip));
+}));
+
 router.post('/trips/:id(\\d+)/board', asyncHandler(async (req, res) => {
   const user = await requireAuth(req);
   const tripId = parseInt(req.params.id, 10);

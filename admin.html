@@ -1607,11 +1607,12 @@
   // Lounge/VCC aren't hubs, nothing to open/close there). Mirrors the same
   // three states Hub's own screen walks through in order.
   function hubActionButtonHtml(hub) {
+    const clearBtn = `<button data-transport-hub-action="clear" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#57534E;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;margin-left:8px;">Clear</button>`;
     if (hub.closedAt) {
-      return `<button data-transport-hub-action="reopen" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Reopen</button>`;
+      return `<button data-transport-hub-action="reopen" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Reopen</button>${clearBtn}`;
     }
     if (hub.openedAt) {
-      return `<button data-transport-hub-action="close" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Close</button>`;
+      return `<button data-transport-hub-action="close" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Close</button>${clearBtn}`;
     }
     return `<button data-transport-hub-action="open" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#166534;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Open</button>`;
   }
@@ -1748,6 +1749,14 @@
             try {
               await api(`/hubs/${encodeURIComponent(hubId)}/reopen`, { method: 'POST' });
               showToast('Hub reopened', 'success');
+              renderTransportTab();
+            } catch (e) { showToast(e.message); }
+          });
+        } else if (action === 'clear') {
+          showConfirmModal('Clear this hub\'s status entirely? It will go back to "not yet opened" today.', 'Clear Hub Status', async () => {
+            try {
+              await api(`/hubs/${encodeURIComponent(hubId)}/clear`, { method: 'POST' });
+              showToast('Hub status cleared', 'success');
               renderTransportTab();
             } catch (e) { showToast(e.message); }
           });
@@ -2310,71 +2319,6 @@
         <tfoot><tr>${footer.map((v, i) => cell(v, i, { foot: true, strong: true })).join('')}</tr></tfoot>
       </table>
     `;
-  }
-
-  // =========================================================== TRANSPORT ====
-  async function renderTransportTab() {
-    showLoadingIfEmpty();
-    let data;
-    try { data = await api('/dashboard/transport'); } catch (e) { showToast(e.message); return; }
-
-    const all = [...data.scheduled, ...data.boarding, ...data.departed, ...data.arrived];
-    const totalCapacity = all.reduce((s, b) => s + b.capacity, 0);
-    const totalOnboard = all.reduce((s, b) => s + b.onboard, 0);
-
-    function busRing(b, ringColor) {
-      const pct = b.capacity > 0 ? b.onboard / b.capacity : 0;
-      return `
-        <div class="ring-row" style="padding:8px 0; border-top:1px solid #E8E1D3;">
-          ${donutRing(pct, { size: 44, stroke: 5, color: ringColor, fontSize: 9, label: `${b.onboard}/${b.capacity}` })}
-          <div class="ring-info">
-            <div class="ring-name" style="font-size:13px;">${escapeHtml(b.hubName)} — ${escapeHtml(b.label)}</div>
-            <div class="ring-meta">${b.onboard} of ${b.capacity}${b.standbyOnboard > 0 ? ` · ${b.standbyOnboard} standby` : ''}</div>
-          </div>
-        </div>
-      `;
-    }
-
-    renderShell(`
-      <div class="stat-row">
-        <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${all.length}</div><div class="stat-label">Total Buses</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value ${(`${totalOnboard}/${totalCapacity}`).length > 6 ? 'stat-value-long' : ''}">${totalOnboard}/${totalCapacity}</div><div class="stat-label">Onboard</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('pin', 20)}</div><div class="stat-value">${data.arrived.length}</div><div class="stat-label">Arrived</div></div>
-        <div class="stat-card"><div class="stat-icon">${icon('sparkle', 20)}</div><div class="stat-value">${data.standby.total}</div><div class="stat-label">Standby Issued</div></div>
-      </div>
-      <div class="bar-chart-wrap" style="height:150px; margin-bottom:16px;">
-        ${barChart([
-          { label: 'Scheduled', value: data.scheduled.length, color: '#57534E' },
-          { label: 'Boarding', value: data.boarding.length, color: '#f59e0b' },
-          { label: 'Departed', value: data.departed.length, color: '#8C734C' },
-          { label: 'Arrived', value: data.arrived.length, color: '#6b5636' },
-        ], { height: 100 })}
-      </div>
-
-      ${data.standby.total > 0 ? `
-        <div class="card">
-          <h2 class="section">Standby tickets issued, by hub</h2>
-          ${data.standby.byHub.map(h => `<div class="row-flex"><div>${escapeHtml(h.hubName)}</div><div>${h.count}</div></div>`).join('')}
-        </div>
-      ` : ''}
-
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#57534E;"></span>Scheduled — capacity ready, not yet boarding</h2>
-        ${data.scheduled.length ? data.scheduled.map(b => busRing(b, '#57534E')).join('') : '<div class="empty">None.</div>'}
-      </div>
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#f59e0b;"></span>Boarding now</h2>
-        ${data.boarding.length ? data.boarding.map(b => busRing(b, '#f59e0b')).join('') : '<div class="empty">None.</div>'}
-      </div>
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#8C734C;"></span>Departed — en route to central hub</h2>
-        ${data.departed.length ? data.departed.map(b => busRing(b, '#8C734C')).join('') : '<div class="empty">None.</div>'}
-      </div>
-      <div class="card">
-        <h2 class="section"><span class="legend-dot" style="background:#6b5636;"></span>Arrived at central hub</h2>
-        ${data.arrived.length ? data.arrived.map(b => busRing(b, '#6b5636')).join('') : '<div class="empty">None.</div>'}
-      </div>
-    `);
   }
 
   function loadCurrentTabBody() {

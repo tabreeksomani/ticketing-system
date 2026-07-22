@@ -91,4 +91,16 @@ router.post('/hubs/:hubId/reopen', asyncHandler(async (req, res) => {
   res.json({ id: hubId, closedAt: null });
 }));
 
+// Admin-only full reset back to "not yet opened" - for when a hub was
+// opened by mistake (e.g. wrong hub picked) and reopen (which only clears
+// closed_at) isn't enough, since it'd leave the stale opened_at in place.
+router.post('/hubs/:hubId/clear', asyncHandler(async (req, res) => {
+  await requireRole(req, ['admin']);
+  const hubId = decodeURIComponent(req.params.hubId);
+  const { rows } = await pool.query('SELECT id FROM hubs WHERE id = $1', [hubId]);
+  if (!rows.length) jsonError('Unknown hub', 404);
+  await pool.query('UPDATE hubs SET opened_at = NULL, closed_at = NULL WHERE id = $1', [hubId]);
+  res.json({ id: hubId, openedAt: null, closedAt: null });
+}));
+
 module.exports = router;
