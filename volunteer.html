@@ -92,7 +92,7 @@
   const API = 'api';
   let token = localStorage.getItem('volunteer_token');
   let user = JSON.parse(localStorage.getItem('volunteer_user') || 'null');
-  let tab = 'allocation'; // 'allocation' | 'reassign' | 'view'
+  let tab = 'view'; // 'allocation' | 'reassign' | 'view' -- allocation tab hidden, see renderShell
 
   // Which of this login's hubs allocation/standby is currently attributed
   // to - chosen right after signing in, not as part of the sign-in form
@@ -579,7 +579,7 @@
       </header>
       <main>
         <div class="tabs">
-          <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Allocate Ticket</div>
+          <!-- <div class="tab ${tab === 'allocation' ? 'active' : ''}" data-tab="allocation">Allocate Ticket</div> -->
           <div class="tab ${tab === 'view' ? 'active' : ''}" data-tab="view">View Ticket</div>
           <div class="tab ${tab === 'reassign' ? 'active' : ''}" data-tab="reassign">Update Ticket</div>
         </div>
