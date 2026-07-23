@@ -14,6 +14,12 @@
   header button, header #homeBtn { font-size: 12px; color: #57534E; background: #F7F5F0; border: 1px solid #E2D9C4; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
   header #homeBtn { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
   main { padding: 16px; max-width: 900px; margin: 0 auto; padding-bottom: 50px; }
+  /* Ops tab only (toggled via JS on tab switch, see renderAppShell) - drops
+     the 900px cap so the dashboard can use the full window width. Doesn't
+     touch scrolling - normal page scroll still applies here same as every
+     other tab, it's just sized (see ops-dashboard.js's large:true styles)
+     to rarely need it. */
+  body.ops-fullscreen main { max-width: none; width: 100%; }
   .tabs { display: flex; gap: 6px; margin-bottom: 18px; overflow-x: auto; }
   .tab { flex: 0 0 auto; text-align: center; padding: 10px 16px; border-radius: 10px; background: #F7F5F0; color: #57534E; border: 1px solid #E2D9C4; cursor: pointer; font-size: 13px; font-weight: 700; white-space: nowrap; }
   .tab.active { background: #8C734C; color: #fff; border-color: #8C734C; }
@@ -95,6 +101,7 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="src/ops-dashboard.js"></script>
 <script>
   const API = 'api';
   let token = localStorage.getItem('admin_token');
@@ -662,6 +669,9 @@
   }
 
   function logout() {
+    const tabBodyEl = document.getElementById('tabBody');
+    if (tabBodyEl) OpsDashboard.unmount(tabBodyEl);
+    document.body.classList.remove('ops-fullscreen');
     localStorage.removeItem('admin_token'); localStorage.removeItem('admin_user');
     token = null; user = null;
     renderLogin();
@@ -673,9 +683,19 @@
     ['egress', 'Egress'],
     ['report', 'Report'],
     ['transport', 'Buses'],
+    ['ops', 'Ops'],
   ];
 
   function renderAppShell() {
+    // Rebuilding #app below discards the current #tabBody outright - if Ops
+    // was mounted on it, its poll timer would otherwise keep running against
+    // a detached element forever. Safe to call unconditionally (no-op if
+    // nothing's mounted there).
+    const oldTabBody = document.getElementById('tabBody');
+    if (oldTabBody) OpsDashboard.unmount(oldTabBody);
+    // See the body.ops-fullscreen CSS rule - only the Ops tab drops the
+    // 900px width cap; every other tab keeps admin's normal layout.
+    document.body.classList.toggle('ops-fullscreen', tab === 'ops');
     document.getElementById('app').innerHTML = `
       <header>
         <div><div class="title"><span class="live">LIVE</span>${icon('ticket', 18)} ${escapeHtml(user.id)}</div><div class="sub">${escapeHtml(user.role)}</div></div>
@@ -830,7 +850,7 @@
               ${data.map(hub => `
                 <tr>
                   <td>${escapeHtml(hub.hubName)}</td>
-                  <td>${hub.travelMinutes} min</td>
+                  <td>${hub.timeToPl} min</td>
                   <td>${hub.totalCapacity}</td>
                   <td>${hub.totalSold}</td>
                   <td>${hub.totalCapacity - hub.totalSold}</td>
@@ -1671,7 +1691,7 @@
         <h2 class="section">Hub &amp; Location Status</h2>
         <div class="table-wrap">
           <table>
-            <tr><th></th><th>Location</th><th>Waiting</th><th>En Route</th><th>Arrived</th><th>Hub Opened</th><th>Hub Closed</th><th>Action</th></tr>
+            <tr><th></th><th>Location</th><th>Boarding</th><th>En Route</th><th>Idle</th><th>Hub Opened</th><th>Hub Closed</th><th>Action</th></tr>
             ${locationRows.map((r) => `
               <tr data-transport-group="${escapeHtml(r.name)}" style="cursor:pointer;">
                 <td>${expandedTransportGroups.has(r.name) ? '▾' : '▸'}</td>
@@ -2327,6 +2347,17 @@
     else if (tab === 'egress') renderEgressTab();
     else if (tab === 'report') renderReportTab();
     else if (tab === 'transport') renderTransportTab();
+    else if (tab === 'ops') renderOpsTab();
+  }
+
+  // The shared TV/kiosk dashboard (src/ops-dashboard.js, also used standalone
+  // by ops.html) manages its own poll internally once mounted - unlike every
+  // other tab here, it doesn't go through refreshCurrentTabData()'s 10s
+  // cycle (see the exclusion list below) or re-fetch on its own. It just
+  // needs mounting into the freshly-built #tabBody.
+  function renderOpsTab() {
+    const el = document.getElementById('tabBody');
+    if (el) OpsDashboard.mount(el, { token, apiBase: API, large: true });
   }
 
   // Single source of truth for incidentsData/openIncidentPlates - both the

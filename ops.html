@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<title>Ops — Ticketing</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Full-width, no page-scroll REQUIRED (typography/spacing sized so it
+     normally fits a 75" TV at a glance) - but not forcibly prevented either.
+     If content ever runs longer than the screen, it just scrolls like any
+     other page, rather than silently clipping real data. */
+  html, body { margin: 0; padding: 0; min-height: 100vh; background: #FAF8F3; color: #241C10; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  main { padding: 20px 28px 24px; width: 100%; }
+  .kiosk-topbar { display: flex; justify-content: flex-end; padding: 8px 28px 0; }
+  .kiosk-topbar button { font-size: 15px; color: #A8A093; background: none; border: none; cursor: pointer; padding: 6px 10px; }
+  .kiosk-topbar button:hover { color: #756c5a; }
+  .login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 14px; padding: 18px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
+  .login-card { max-width: 360px; width: 100%; }
+  h2.section { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #57534E; margin: 0 0 12px; }
+  label { font-size: 11px; color: #57534E; display: block; margin-bottom: 4px; }
+  input { width: 100%; background: #F7F5F0; border: 1px solid #DDD3BE; border-radius: 8px; color: #241C10; padding: 10px 12px; font-size: 14px; margin-bottom: 10px; outline: none; }
+  .btn { padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; border: none; }
+  .btn-primary { background: #8C734C; color: #fff; }
+  .btn-full { width: 100%; }
+  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 8px; font-size: 12px; z-index: 30; max-width: 90%; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); background: #FEE2E2; border: 1px solid #FCA5A5; color: #B91C1C; }
+</style>
+</head>
+<body>
+<div id="kioskTopbar"></div>
+<div id="app"></div>
+<script src="src/ops-dashboard.js"></script>
+<script>
+  const API = 'api';
+  // Same localStorage keys as admin.html - a device already signed into
+  // Admin can open this kiosk page without logging in again, and vice versa.
+  let token = localStorage.getItem('admin_token');
+  let user = JSON.parse(localStorage.getItem('admin_user') || 'null');
+
+  function showToast(msg) {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2800);
+  }
+
+  async function api(path, options = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const res = await fetch(API + path, Object.assign({}, options, { headers }));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  function logout() {
+    const opsEl = document.getElementById('opsContainer');
+    if (opsEl) OpsDashboard.unmount(opsEl);
+    localStorage.removeItem('admin_token'); localStorage.removeItem('admin_user');
+    token = null; user = null;
+    renderLogin();
+  }
+
+  function renderTopbar(showSignOut) {
+    document.getElementById('kioskTopbar').innerHTML = showSignOut
+      ? `<div class="kiosk-topbar"><button id="kioskLogoutBtn">Sign out</button></div>`
+      : '';
+    const btn = document.getElementById('kioskLogoutBtn');
+    if (btn) btn.onclick = logout;
+  }
+
+  function renderLogin() {
+    renderTopbar(false);
+    document.getElementById('app').innerHTML = `
+      <div class="login-screen"><div class="card login-card">
+        <h2 class="section">Ops Dashboard</h2>
+        <div style="font-size:12px;color:#756c5a;margin-bottom:18px;">Sign in to view the live ops dashboard.</div>
+        <label>Password</label><input id="loginPass" type="password" />
+        <button class="btn btn-primary btn-full" id="loginBtn">Sign in</button>
+      </div></div>
+    `;
+    document.getElementById('loginBtn').onclick = async () => {
+      const secret = document.getElementById('loginPass').value;
+      try {
+        const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ id: 'admin', secret }) });
+        token = data.token; user = data.user;
+        localStorage.setItem('admin_token', token);
+        localStorage.setItem('admin_user', JSON.stringify(user));
+        boot();
+      } catch (e) { showToast(e.message); }
+    };
+    document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginBtn').click(); });
+  }
+
+  function renderDashboard() {
+    renderTopbar(true);
+    document.getElementById('app').innerHTML = '<main><div id="opsContainer"></div></main>';
+    OpsDashboard.mount(document.getElementById('opsContainer'), { token, apiBase: API, large: true, fit: true });
+  }
+
+  function boot() {
+    if (!token || !user) { renderLogin(); return; }
+    renderDashboard();
+  }
+  boot();
+</script>
+</body>
+</html>

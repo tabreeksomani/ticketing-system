@@ -11,7 +11,8 @@
 //     {
 //       "id": "surrey",              // optional - derived from name if omitted
 //       "name": "Surrey",
-//       "travelMinutes": 45,
+//       "timeToPl": 45,
+//       "timeToVcc": 45,
 //       "volunteerPassword": "...",
 //       "timeslots": [
 //         { "departureTime": "2026-07-06T18:00:00", "capacity": 50 }
@@ -62,9 +63,9 @@ async function main() {
     for (const hub of data.hubs || []) {
       const id = hub.id || slugify(hub.name);
       await pool.query(
-        `INSERT INTO hubs (id, name, travel_minutes) VALUES ($1, $2, $3)
-         ON CONFLICT (id) DO UPDATE SET name = excluded.name, travel_minutes = excluded.travel_minutes`,
-        [id, hub.name, hub.travelMinutes ?? 30]
+        `INSERT INTO hubs (id, name, time_to_pl, time_to_vcc) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO UPDATE SET name = excluded.name, time_to_pl = excluded.time_to_pl, time_to_vcc = excluded.time_to_vcc`,
+        [id, hub.name, hub.timeToPl ?? 30, hub.timeToVcc ?? hub.timeToPl ?? 30]
       );
       console.log(`hub "${hub.name}" (${id}): upserted`);
 

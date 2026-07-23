@@ -7,7 +7,10 @@ const router = express.Router();
 
 router.get('/dashboard/sales', asyncHandler(async (req, res) => {
   await requireRole(req, ['admin']);
-  const { rows: hubs } = await pool.query('SELECT * FROM hubs ORDER BY name ASC');
+  // Demo hub is for exercising the scan flow on shared devices, not a real
+  // sales channel - excluded from Sales/Report so its test tickets don't
+  // skew the real per-hub numbers admin is reading off of here.
+  const { rows: hubs } = await pool.query("SELECT * FROM hubs WHERE id != 'demo' ORDER BY name ASC");
   const out = [];
   for (const hub of hubs) {
     // "Returned" means boarded an R2 bus (trip4_id set), not "R2 marked
@@ -56,7 +59,7 @@ router.get('/dashboard/sales', asyncHandler(async (req, res) => {
     out.push({
       hubId: hub.id,
       hubName: hub.name,
-      travelMinutes: hub.travel_minutes,
+      timeToPl: hub.time_to_pl,
       timeslots: slots,
       totalSold: slots.reduce((s, x) => s + x.sold, 0),
       totalCapacity: slots.reduce((s, x) => s + x.capacity, 0),
@@ -89,6 +92,7 @@ router.get('/dashboard/daily-sales', asyncHandler(async (req, res) => {
             COUNT(*) FILTER (WHERE t.fare_type = 'adult')::int AS adult_count,
             COUNT(*) FILTER (WHERE t.fare_type = 'child')::int AS child_count
      FROM tickets t JOIN hubs h ON t.hub_id = h.id
+     WHERE h.id != 'demo'
      GROUP BY h.id, h.name, day
      ORDER BY day ASC`
   );
@@ -387,6 +391,245 @@ router.get('/dashboard/transport', asyncHandler(async (req, res) => {
     tripSummary,
     active,
     history,
+  });
+}));
+
+// Human-readable place name for a trip origin/destination id - same mapping
+// used by transportLocationLabel above, factored out so the activity feed
+// below can reuse it without dragging in that whole function's status logic.
+function placeLabel(id, hubNameById) {
+  if (id === 'central') return 'Premium Lounge';
+  if (id === 'venue') return 'VCC';
+  return hubNameById[id] || id;
+}
+
+// One combined feed for the TV/kiosk Ops dashboard - the "Buses by location"
+// table, the rider-lifecycle funnel (same definition as /dashboard/ingress,
+// just relabeled Lounge/VCC to match this screen's language), the top stat
+// row, and a synthesized activity log. No new event-log table: activity is
+// reconstructed from timestamps that already exist (bus_trips
+// departed_at/arrived_at, hubs opened_at/closed_at, incidents created_at) -
+// good enough for "what just happened," not a substitute for a real log if
+// this ever needs custom per-event messages.
+router.get('/dashboard/ops', asyncHandler(async (req, res) => {
+  await requireRole(req, ['admin']);
+
+  // Demo hub excluded, same reasoning as /dashboard/sales - this is a
+  // public-facing screen, not somewhere test scans from a shared device
+  // should show up as real hub activity.
+  const { rows: hubRows } = await pool.query("SELECT id, name, opened_at, closed_at, time_to_pl, time_to_vcc FROM hubs WHERE id != 'demo' ORDER BY name ASC");
+  const hubNameById = {};
+  const hubTimeToPlById = {};
+  const hubTimeToVccById = {};
+  hubRows.forEach((h) => {
+    hubNameById[h.id] = h.name;
+    hubTimeToPlById[h.id] = h.time_to_pl;
+    hubTimeToVccById[h.id] = h.time_to_vcc;
+  });
+
+  // Idle/Boarding/En route counts + last departure, per hub-as-origin.
+  const { rows: hubBusRows } = await pool.query(
+    `SELECT h.id,
+            COUNT(bt.id) FILTER (WHERE bt.status = 'scheduled')::int AS idle,
+            COUNT(bt.id) FILTER (WHERE bt.status = 'boarding')::int AS boarding,
+            COUNT(bt.id) FILTER (WHERE bt.status = 'departed')::int AS en_route,
+            MAX(bt.departed_at) AS last_departure
+     FROM hubs h
+     LEFT JOIN bus_trips bt ON bt.origin = h.id
+     GROUP BY h.id`
+  );
+  const hubBusById = {};
+  hubBusRows.forEach((r) => { hubBusById[r.id] = r; });
+
+  // Same breakdown for Premium Lounge (central) and VCC (venue) - not real
+  // hub rows, so queried separately and appended after the hub list below.
+  const { rows: placeBusRows } = await pool.query(
+    `SELECT origin,
+            COUNT(*) FILTER (WHERE status = 'scheduled')::int AS idle,
+            COUNT(*) FILTER (WHERE status = 'boarding')::int AS boarding,
+            COUNT(*) FILTER (WHERE status = 'departed')::int AS en_route,
+            MAX(departed_at) AS last_departure
+     FROM bus_trips WHERE origin IN ('central', 'venue')
+     GROUP BY origin`
+  );
+  const placeBusByOrigin = {};
+  placeBusRows.forEach((r) => { placeBusByOrigin[r.origin] = r; });
+
+  // Registered (every ticket sold for that hub, standby included) vs
+  // departed (how many of those have actually left via O1) - same
+  // definitions as /dashboard/egress's soldTotal/departedTotal, just scoped
+  // to this screen's own hub list.
+  const { rows: hubTicketRows } = await pool.query(
+    `SELECT t.hub_id,
+            COUNT(*)::int AS registered,
+            COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL)::int AS departed
+     FROM tickets t
+     LEFT JOIN bus_trips bt1 ON t.trip1_id = bt1.id
+     WHERE t.hub_id != 'demo'
+     GROUP BY t.hub_id`
+  );
+  const hubTicketsById = {};
+  hubTicketRows.forEach((r) => { hubTicketsById[r.hub_id] = r; });
+
+  const locations = hubRows.map((h) => {
+    const b = hubBusById[h.id] || { idle: 0, boarding: 0, en_route: 0, last_departure: null };
+    const t = hubTicketsById[h.id] || { registered: 0, departed: 0 };
+    return {
+      id: h.id, name: h.name, kind: 'hub',
+      openedAt: h.opened_at, closedAt: h.closed_at,
+      idle: b.idle, boarding: b.boarding, enRoute: b.en_route, lastDeparture: b.last_departure,
+      registered: t.registered, departed: t.departed,
+    };
+  });
+  [['central', 'Premium Lounge'], ['venue', 'VCC']].forEach(([id, name]) => {
+    const b = placeBusByOrigin[id] || { idle: 0, boarding: 0, en_route: 0, last_departure: null };
+    locations.push({
+      id, name, kind: id,
+      openedAt: null, closedAt: null,
+      idle: b.idle, boarding: b.boarding, enRoute: b.en_route, lastDeparture: b.last_departure,
+    });
+  });
+
+  // Top stat row. Demo hub excluded throughout, same as the location table.
+  const { rows: totalRows } = await pool.query("SELECT COUNT(*)::int AS total FROM tickets WHERE hub_id != 'demo'");
+  const totalTickets = totalRows[0].total;
+
+  const { rows: enRouteRows } = await pool.query(
+    `SELECT COUNT(*)::int AS trips
+     FROM bus_trips bt WHERE bt.status = 'departed' AND bt.origin != 'demo' AND bt.destination != 'demo'`
+  );
+  const busesEnRoute = enRouteRows[0].trips;
+
+  const { rows: incidentCountRows } = await pool.query("SELECT COUNT(*)::int AS n FROM incidents WHERE status = 'open'");
+  const activeIncidents = incidentCountRows[0].n;
+
+  // Rider lifecycle funnel - same query/definitions as /dashboard/ingress'
+  // statRows (see the comment there for why departedHubTotal is cumulative
+  // and destination='venue' trips fold into the en-route/arrived-at-venue
+  // buckets), just relabeled Lounge/VCC for this screen.
+  const { rows: funnelRows } = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL)::int AS departed_hub_total,
+       COUNT(*) FILTER (WHERE bt1.destination = 'central' AND bt1.departed_at IS NOT NULL AND bt1.arrived_at IS NULL)::int AS en_route_to_lounge,
+       COUNT(*) FILTER (WHERE bt1.destination = 'central' AND bt1.arrived_at IS NOT NULL AND t.trip2_id IS NULL)::int AS at_lounge,
+       COUNT(*) FILTER (WHERE
+            (bt2.departed_at IS NOT NULL AND bt2.arrived_at IS NULL)
+         OR (bt1.destination = 'venue' AND bt1.departed_at IS NOT NULL AND bt1.arrived_at IS NULL)
+       )::int AS en_route_to_vcc,
+       COUNT(*) FILTER (WHERE bt2.arrived_at IS NOT NULL OR (bt1.destination = 'venue' AND bt1.arrived_at IS NOT NULL))::int AS arrived_vcc,
+       AVG(EXTRACT(EPOCH FROM (t.trip2_boarded_at - bt1.arrived_at)) / 60)
+         FILTER (WHERE bt1.destination = 'central' AND bt1.arrived_at IS NOT NULL AND t.trip2_boarded_at IS NOT NULL) AS avg_wait_at_lounge_minutes
+     FROM tickets t
+     LEFT JOIN bus_trips bt1 ON t.trip1_id = bt1.id
+     LEFT JOIN bus_trips bt2 ON t.trip2_id = bt2.id
+     WHERE t.hub_id != 'demo'`
+  );
+  const f = funnelRows[0];
+  // "Riders departed total" for the stat row - same cumulative definition as
+  // lifecycle.notDeparted derives from (bt1.departed_at IS NOT NULL), just
+  // surfaced as its own headline number instead of buried in the funnel.
+  const ridersDepartedTotal = f.departed_hub_total;
+  const lifecycle = {
+    totalTickets,
+    departedHubTotal: ridersDepartedTotal,
+    enRouteToLounge: f.en_route_to_lounge,
+    atLounge: f.at_lounge,
+    avgWaitAtLoungeMinutes: f.avg_wait_at_lounge_minutes !== null ? Math.round(f.avg_wait_at_lounge_minutes) : null,
+    enRouteToVcc: f.en_route_to_vcc,
+    arrivedVcc: f.arrived_vcc,
+  };
+
+  // Open incidents, most recent first - capped for display; activeIncidents
+  // above stays the true total even if it exceeds this cap.
+  const { rows: incidentRows } = await pool.query(
+    `SELECT license_plate, description, created_at FROM incidents WHERE status = 'open' ORDER BY created_at DESC LIMIT 10`
+  );
+  const incidents = incidentRows.map((r) => ({ licensePlate: r.license_plate, description: r.description, createdAt: r.created_at }));
+
+  // Activity feed: no dedicated event-log table (see comment above the
+  // route) - reconstructed from existing timestamps across 4 sources, merged
+  // and sorted here in JS since they don't share a common row shape.
+  const { rows: departureRows } = await pool.query(
+    `SELECT license_plate, origin, destination, departed_at, ${TRANSPORT_ONBOARD_CASE} AS onboard
+     FROM bus_trips bt WHERE departed_at IS NOT NULL AND origin != 'demo' AND destination != 'demo'
+     ORDER BY departed_at DESC LIMIT 15`
+  );
+  const { rows: arrivalRows } = await pool.query(
+    `SELECT license_plate, destination, arrived_at FROM bus_trips
+     WHERE arrived_at IS NOT NULL AND origin != 'demo' AND destination != 'demo'
+     ORDER BY arrived_at DESC LIMIT 15`
+  );
+  const { rows: incidentActivityRows } = await pool.query(
+    `SELECT license_plate, description, created_at FROM incidents ORDER BY created_at DESC LIMIT 10`
+  );
+
+  const activity = [];
+  departureRows.forEach((r) => {
+    activity.push({
+      at: r.departed_at,
+      text: `${r.license_plate} departed ${placeLabel(r.origin, hubNameById)} → ${placeLabel(r.destination, hubNameById)}${r.onboard === 0 ? ' (empty)' : ''}`,
+    });
+  });
+  arrivalRows.forEach((r) => {
+    activity.push({ at: r.arrived_at, text: `${r.license_plate} arrived at ${placeLabel(r.destination, hubNameById)}` });
+  });
+  hubRows.forEach((h) => {
+    if (h.opened_at) activity.push({ at: h.opened_at, text: `${h.name} opened for the day` });
+    if (h.closed_at) activity.push({ at: h.closed_at, text: `${h.name} closed` });
+  });
+  incidentActivityRows.forEach((r) => {
+    activity.push({ at: r.created_at, text: `Incident logged — ${r.license_plate}: ${r.description}` });
+  });
+  activity.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+  // Arrivals forecast: riders currently en route to Lounge or VCC, bucketed
+  // by estimated minutes-until-arrival. Estimated, not tracked - there's no
+  // live GPS anywhere in this system, so "arrival" is departed_at + an
+  // assumed travel duration. O1 uses that hub's own directional estimate -
+  // time_to_pl for a hub->central trip, time_to_vcc for a hub->venue direct
+  // trip, since those are different distances. O2 (Premium Lounge -> VCC)
+  // has no per-hub estimate to draw on (it doesn't originate at a hub), so
+  // it uses a flat assumed duration instead. Trips estimated more than 30
+  // minutes out are outside this forecast's window entirely (matches the
+  // UI, which only has 0-10/10-20/20-30 buckets) - not lost data, just not
+  // shown here.
+  const O2_DURATION_MINUTES = 10;
+
+  const { rows: enRouteTripRows } = await pool.query(
+    `SELECT bt.leg, bt.origin, bt.destination, bt.departed_at, ${TRANSPORT_ONBOARD_CASE} AS onboard
+     FROM bus_trips bt
+     WHERE bt.status = 'departed' AND bt.origin != 'demo' AND bt.destination != 'demo'
+       AND ((bt.leg = 'O1' AND bt.destination IN ('central', 'venue')) OR bt.leg = 'O2')`
+  );
+
+  const forecast = {
+    lounge: { '0-10': 0, '10-20': 0, '20-30': 0 },
+    vcc: { '0-10': 0, '10-20': 0, '20-30': 0 },
+  };
+  const now = Date.now();
+  enRouteTripRows.forEach((r) => {
+    const bucketKey = r.destination === 'central' ? 'lounge' : r.destination === 'venue' ? 'vcc' : null;
+    if (!bucketKey || !r.departed_at) return;
+    const durationMinutes = r.leg === 'O2'
+      ? O2_DURATION_MINUTES
+      : ((r.destination === 'venue' ? hubTimeToVccById[r.origin] : hubTimeToPlById[r.origin]) ?? 30);
+    const estimatedArrival = new Date(r.departed_at).getTime() + durationMinutes * 60000;
+    const minutesOut = (estimatedArrival - now) / 60000;
+    if (minutesOut <= 10) forecast[bucketKey]['0-10'] += r.onboard;
+    else if (minutesOut <= 20) forecast[bucketKey]['10-20'] += r.onboard;
+    else if (minutesOut <= 30) forecast[bucketKey]['20-30'] += r.onboard;
+  });
+
+  res.json({
+    ridersDepartedTotal,
+    totalTickets,
+    busesEnRoute,
+    activeIncidents,
+    lifecycle,
+    locations,
+    incidents,
+    activity: activity.slice(0, 25),
+    forecast,
   });
 }));
 
