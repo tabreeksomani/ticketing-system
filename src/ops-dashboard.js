@@ -307,11 +307,12 @@
   }
 
   function incidentsHtml(incidents) {
+    const shown = incidents.slice(0, 3);
     return `
       <div class="ops-card">
-        <h3 class="ops-card-title">Incidents</h3>
+        <h3 class="ops-card-title">Incidents ${incidents.length > 3 ? `<span style="font-weight:400;text-transform:none;color:#756c5a;"> · showing 3 of ${incidents.length}</span>` : ''}</h3>
         <div>
-          ${incidents.length ? incidents.map((i) => `
+          ${shown.length ? shown.map((i) => `
             <div class="ops-incident">
               <span class="ops-incident-plate">${escapeHtml(i.licensePlate)}</span> — ${escapeHtml(i.description)}
               <div class="ops-incident-time">${timeAgo(i.createdAt)}</div>
@@ -326,7 +327,7 @@
   // glance-able dashboard card only needs "what just happened" - showing
   // all 25 was blowing the card height way past every other section on
   // screen for no benefit over the most recent handful.
-  const ACTIVITY_DISPLAY_LIMIT = 8;
+  const ACTIVITY_DISPLAY_LIMIT = 5;
 
   function activityHtml(activity) {
     const shown = activity.slice(0, ACTIVITY_DISPLAY_LIMIT);
