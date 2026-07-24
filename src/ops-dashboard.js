@@ -54,7 +54,6 @@
       .ops-updated { font-size: 12px; color: #756c5a; font-weight: 400; margin-left: 8px; }
       .ops-badge { font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 20px; }
       .ops-badge-live { background: #DCFCE7; color: #166534; }
-      .ops-badge-wrapped { background: #F1F0EC; color: #57534E; }
       .ops-badge-notstarted { background: #F1F0EC; color: #756c5a; }
       .ops-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
       .ops-stat-card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
@@ -68,7 +67,7 @@
       .ops-lifecycle-row { display: flex; align-items: stretch; gap: 14px; margin-bottom: 14px; }
       .ops-lifecycle-row .ops-card { margin-bottom: 0; flex: 1; min-width: 0; }
       .ops-incidents-inline { flex: 0 0 180px; display: flex; flex-direction: column; justify-content: center; }
-      .ops-funnel { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+      .ops-funnel { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
       .ops-funnel-stage { border-radius: 10px; padding: 10px 8px; text-align: center; background: #F7F5F0; }
       .ops-funnel-stage.ops-stage-blue { background: #DBEAFE; }
       .ops-funnel-stage.ops-stage-purple { background: #EDE7FE; }
@@ -177,10 +176,11 @@
 
   function eventBadgeHtml(locations) {
     const hubs = locations.filter((l) => l.kind === 'hub');
-    const anyOpen = hubs.some((l) => l.openedAt && !l.closedAt);
-    if (anyOpen) return '<span class="ops-badge ops-badge-live">Event in progress</span>';
+    // Latches on the moment any hub first opens and never clears: hubs close
+    // at the end of ingress, but egress continues after, so a closed hub does
+    // not mean the event is over.
     const anyOpenedEver = hubs.some((l) => l.openedAt);
-    if (anyOpenedEver) return '<span class="ops-badge ops-badge-wrapped">Event wrapped up</span>';
+    if (anyOpenedEver) return '<span class="ops-badge ops-badge-live">Event in progress</span>';
     return '<span class="ops-badge ops-badge-notstarted">Not started</span>';
   }
 
@@ -196,14 +196,16 @@
     const stages = [
       // Departed / total registered - how many of everyone who bought a
       // ticket have actually left their hub.
-      { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Departed', color: 'blue' },
-      { value: l.enRouteToLounge.toLocaleString(), label: 'En rt to Lounge', color: 'purple' },
+      { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
+      { value: l.enRouteToLounge.toLocaleString(), label: 'Ingress to Lounge', color: 'purple' },
       { value: l.atLounge.toLocaleString(), label: `At Lounge${l.avgWaitAtLoungeMinutes !== null ? ` · avg ${l.avgWaitAtLoungeMinutes}m` : ''}`, color: 'orange' },
-      { value: l.enRouteToVcc.toLocaleString(), label: 'En rt to VCC', color: null },
+      { value: l.enRouteToVcc.toLocaleString(), label: 'Ingress to VCC', color: null },
       // Arrived / departed - what fraction of the riders who actually left
       // their hub have made it all the way to VCC (not out of everyone
       // registered, since plenty haven't departed yet at all).
       { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived, VCC', color: 'green' },
+      // Egress: riders currently on a return (R2) bus back to their hub.
+      { value: (l.enRouteToHub || 0).toLocaleString(), label: 'Egress to Hub', color: null },
     ];
     return `
       <div class="ops-card">
@@ -216,7 +218,7 @@
             </div>
           `).join('')}
         </div>
-        <div class="ops-funnel-note">${l.totalTickets.toLocaleString()} tickets · En rt to VCC includes both O1 direct and R2 from Lounge.</div>
+        <div class="ops-funnel-note">${l.totalTickets.toLocaleString()} tickets · Ingress to VCC includes both O1 direct and O2 from Lounge · Egress to Hub is the R2 return leg.</div>
       </div>
     `;
   }
@@ -233,7 +235,7 @@
   function oneLocationsTableHtml(locations) {
     return `
       <table class="ops-table ops-table-compact">
-        <tr><th>Location</th><th>Status</th><th>Idle</th><th>Board</th><th>En rt</th><th>Departed</th></tr>
+        <tr><th>Location</th><th>Status</th><th>Idle</th><th>Board</th><th>Ingress</th><th>Departed</th></tr>
         ${locations.map((l) => `
           <tr>
             <td class="ops-loc-name">${escapeHtml(l.name)}</td>
@@ -299,13 +301,13 @@
         <h3 class="ops-card-title">Arrivals forecast (riders)</h3>
         <div class="ops-table-wrap">
           <table class="ops-table">
-            <tr><th>Location</th><th>0-10m</th><th>10-20m</th><th>20-30m</th></tr>
+            <tr><th>Location</th><th style="text-transform:none">&lt;15m</th><th style="text-transform:none">15-30m</th><th style="text-transform:none">&gt;30m</th></tr>
             ${rows.map(([name, b]) => `
               <tr>
                 <td>${escapeHtml(name)}</td>
-                <td>${b['0-10']}</td>
-                <td>${b['10-20']}</td>
-                <td>${b['20-30']}</td>
+                <td>${b['0-15']}</td>
+                <td>${b['15-30']}</td>
+                <td>${b['30+']}</td>
               </tr>
             `).join('')}
           </table>

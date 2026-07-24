@@ -519,11 +519,16 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
          OR (bt1.destination = 'venue' AND bt1.departed_at IS NOT NULL AND bt1.arrived_at IS NULL)
        )::int AS en_route_to_vcc,
        COUNT(*) FILTER (WHERE bt2.arrived_at IS NOT NULL OR (bt1.destination = 'venue' AND bt1.arrived_at IS NOT NULL))::int AS arrived_vcc,
+       -- Egress: riders on an R2 (central->hub) bus that's left but not yet
+       -- arrived. R2 is the only live return leg (R1/trip3 was retired), so
+       -- this is the one meaningful "heading home" count.
+       COUNT(*) FILTER (WHERE bt4.departed_at IS NOT NULL AND bt4.arrived_at IS NULL)::int AS en_route_to_hub,
        AVG(EXTRACT(EPOCH FROM (t.trip2_boarded_at - bt1.arrived_at)) / 60)
          FILTER (WHERE bt1.destination = 'central' AND bt1.arrived_at IS NOT NULL AND t.trip2_boarded_at IS NOT NULL) AS avg_wait_at_lounge_minutes
      FROM tickets t
      LEFT JOIN bus_trips bt1 ON t.trip1_id = bt1.id
      LEFT JOIN bus_trips bt2 ON t.trip2_id = bt2.id
+     LEFT JOIN bus_trips bt4 ON t.trip4_id = bt4.id
      WHERE t.hub_id != 'demo'`
   );
   const f = funnelRows[0];
@@ -539,6 +544,7 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
     avgWaitAtLoungeMinutes: f.avg_wait_at_lounge_minutes !== null ? Math.round(f.avg_wait_at_lounge_minutes) : null,
     enRouteToVcc: f.en_route_to_vcc,
     arrivedVcc: f.arrived_vcc,
+    enRouteToHub: f.en_route_to_hub,
   };
 
   // Open incidents, most recent first - capped for display; activeIncidents
@@ -591,10 +597,9 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
   // time_to_pl for a hub->central trip, time_to_vcc for a hub->venue direct
   // trip, since those are different distances. O2 (Premium Lounge -> VCC)
   // has no per-hub estimate to draw on (it doesn't originate at a hub), so
-  // it uses a flat assumed duration instead. Trips estimated more than 30
-  // minutes out are outside this forecast's window entirely (matches the
-  // UI, which only has 0-10/10-20/20-30 buckets) - not lost data, just not
-  // shown here.
+  // it uses a flat assumed duration instead. Buckets are 0-15/15-30/30+ (the
+  // last is open-ended), so every en-route bus is shown - nothing falls
+  // outside the window.
   const O2_DURATION_MINUTES = 10;
 
   const { rows: enRouteTripRows } = await pool.query(
@@ -605,8 +610,8 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
   );
 
   const forecast = {
-    lounge: { '0-10': 0, '10-20': 0, '20-30': 0 },
-    vcc: { '0-10': 0, '10-20': 0, '20-30': 0 },
+    lounge: { '0-15': 0, '15-30': 0, '30+': 0 },
+    vcc: { '0-15': 0, '15-30': 0, '30+': 0 },
   };
   const now = Date.now();
   enRouteTripRows.forEach((r) => {
@@ -617,9 +622,11 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
       : ((r.destination === 'venue' ? hubTimeToVccById[r.origin] : hubTimeToPlById[r.origin]) ?? 30);
     const estimatedArrival = new Date(r.departed_at).getTime() + durationMinutes * 60000;
     const minutesOut = (estimatedArrival - now) / 60000;
-    if (minutesOut <= 10) forecast[bucketKey]['0-10'] += r.onboard;
-    else if (minutesOut <= 20) forecast[bucketKey]['10-20'] += r.onboard;
-    else if (minutesOut <= 30) forecast[bucketKey]['20-30'] += r.onboard;
+    // 30+ is open-ended, so every en-route bus lands in a bucket (including
+    // ones >30m out and overdue ones still marked departed, which fall in 0-15).
+    if (minutesOut <= 15) forecast[bucketKey]['0-15'] += r.onboard;
+    else if (minutesOut <= 30) forecast[bucketKey]['15-30'] += r.onboard;
+    else forecast[bucketKey]['30+'] += r.onboard;
   });
 
   res.json({
