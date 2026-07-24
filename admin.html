@@ -97,6 +97,11 @@
   .stack-tooltip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #241C10; color: #FFFFFF; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.1s; z-index: 6; }
   .stack-seg:hover .stack-tooltip { opacity: 1; }
   .trip-menu-dropdown button.danger { color: #B91C1C; }
+
+  /* ---- kiosk topbar for ops tab ---- */
+  .kiosk-topbar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 12px; }
+  .kiosk-topbar button { font-size: 13px; color: #8C734C; background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 8px; cursor: pointer; padding: 6px 12px; font-weight: 700; box-shadow: 0 1px 2px rgba(140,115,76,0.04); outline: none; }
+  .kiosk-topbar button:hover { background: #FAF8F3; color: #6b5636; border-color: #DDD3BE; }
 </style>
 </head>
 <body>
@@ -106,6 +111,7 @@
   const API = 'api';
   let token = localStorage.getItem('admin_token');
   let user = JSON.parse(localStorage.getItem('admin_user') || 'null');
+  let useTvMode = window.innerWidth >= 1024;
   let tab = 'sales';
   let salesData = [];
   let expandedSalesHubs = new Set();
@@ -668,9 +674,15 @@
     document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginBtn').click(); });
   }
 
-  function logout() {
+  function unmountOpsDashboard() {
+    const inner = document.getElementById('opsInnerContainer');
+    if (inner) OpsDashboard.unmount(inner);
     const tabBodyEl = document.getElementById('tabBody');
     if (tabBodyEl) OpsDashboard.unmount(tabBodyEl);
+  }
+
+  function logout() {
+    unmountOpsDashboard();
     document.body.classList.remove('ops-fullscreen');
     localStorage.removeItem('admin_token'); localStorage.removeItem('admin_user');
     token = null; user = null;
@@ -691,8 +703,7 @@
     // was mounted on it, its poll timer would otherwise keep running against
     // a detached element forever. Safe to call unconditionally (no-op if
     // nothing's mounted there).
-    const oldTabBody = document.getElementById('tabBody');
-    if (oldTabBody) OpsDashboard.unmount(oldTabBody);
+    unmountOpsDashboard();
     // See the body.ops-fullscreen CSS rule - only the Ops tab drops the
     // 900px width cap; every other tab keeps admin's normal layout.
     document.body.classList.toggle('ops-fullscreen', tab === 'ops');
@@ -2357,7 +2368,40 @@
   // needs mounting into the freshly-built #tabBody.
   function renderOpsTab() {
     const el = document.getElementById('tabBody');
-    if (el) OpsDashboard.mount(el, { token, apiBase: API, large: true });
+    if (!el) return;
+
+    el.innerHTML = `
+      <div class="kiosk-topbar">
+        <button id="opsFullscreenBtn">Fullscreen</button>
+        <button id="opsModeToggleBtn">${useTvMode ? '📱 Mobile View' : '🖥️ TV View'}</button>
+      </div>
+      <div id="opsInnerContainer"></div>
+    `;
+
+    const inner = document.getElementById('opsInnerContainer');
+    if (inner) {
+      OpsDashboard.mount(inner, { 
+        token, 
+        apiBase: API, 
+        large: useTvMode, 
+        fit: useTvMode 
+      });
+    }
+
+    document.getElementById('opsModeToggleBtn').onclick = () => {
+      useTvMode = !useTvMode;
+      renderOpsTab();
+    };
+
+    document.getElementById('opsFullscreenBtn').onclick = () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+          showToast(`Fullscreen error: ${err.message}`);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    };
   }
 
   // Single source of truth for incidentsData/openIncidentPlates - both the
