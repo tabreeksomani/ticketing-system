@@ -209,22 +209,43 @@
   function funnelHtml(data) {
     const l = data.lifecycle;
     const phase = data.phase === 'egress' ? 'egress' : 'ingress';
-    const stages = [
-      // Departed / total registered - how many of everyone who bought a
-      // ticket have actually left their hub.
-      { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
-      { value: l.enRouteToLounge.toLocaleString(), label: 'Ingress to Lounge', color: 'purple', hideIn: 'egress' },
-      { value: l.atLounge.toLocaleString(), label: `At Lounge${l.avgWaitAtLoungeMinutes !== null ? ` · avg ${l.avgWaitAtLoungeMinutes}m` : ''}`, color: 'orange', hideIn: 'egress' },
-      { value: l.enRouteToVcc.toLocaleString(), label: 'Ingress to VCC', color: null, hideIn: 'egress' },
-      // Arrived / departed - what fraction of the riders who actually left
-      // their hub have made it all the way to VCC (not out of everyone
-      // registered, since plenty haven't departed yet at all).
-      { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived, VCC', color: 'green' },
-      // Egress: riders currently on a return (R2) bus back to their hub, over
-      // how many boarded on the ingress side (departed their hub) - same
-      // denominator as Arrived, VCC.
-      { value: ratioValue(l.enRouteToHub || 0, l.departedHubTotal), label: 'Egress to Hub', color: null, hideIn: 'ingress' },
-    ].filter((s) => s.hideIn !== phase);
+    let stages;
+    let note;
+    if (phase === 'egress') {
+      // Egress funnel mirrors the "Buses by location" egress columns exactly:
+      // summed from the same per-hub location.egress values so the two panels
+      // can never disagree. Plain counts (like that table), leading with the
+      // ingress total for context. Arrivals aren't tracked, same as the table.
+      const e = data.locations.reduce((a, loc) => {
+        if (loc.egress) {
+          a.waiting += loc.egress.waiting;
+          a.boarded += loc.egress.boarded;
+          a.enRoute += loc.egress.enRoute;
+        }
+        return a;
+      }, { waiting: 0, boarded: 0, enRoute: 0 });
+      stages = [
+        { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
+        { value: e.waiting.toLocaleString(), label: 'Waiting', color: 'purple' },
+        { value: e.boarded.toLocaleString(), label: 'Boarded', color: 'orange' },
+        { value: e.enRoute.toLocaleString(), label: 'Egress', color: 'green' },
+      ];
+      note = `${l.totalTickets.toLocaleString()} tickets · Waiting → Boarded → Egress track the R2 return leg by trip4 status; arrivals aren't shown.`;
+    } else {
+      stages = [
+        // Departed / total registered - how many of everyone who bought a
+        // ticket have actually left their hub.
+        { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
+        { value: l.enRouteToLounge.toLocaleString(), label: 'Ingress to Lounge', color: 'purple' },
+        { value: l.atLounge.toLocaleString(), label: `At Lounge${l.avgWaitAtLoungeMinutes !== null ? ` · avg ${l.avgWaitAtLoungeMinutes}m` : ''}`, color: 'orange' },
+        { value: l.enRouteToVcc.toLocaleString(), label: 'Ingress to VCC', color: null },
+        // Arrived / departed - what fraction of the riders who actually left
+        // their hub have made it all the way to VCC (not out of everyone
+        // registered, since plenty haven't departed yet at all).
+        { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived, VCC', color: 'green' },
+      ];
+      note = `${l.totalTickets.toLocaleString()} tickets · Ingress to VCC includes both O1 direct and O2 from Lounge.`;
+    }
     return `
       <div class="ops-card">
         <h3 class="ops-card-title">Rider lifecycle</h3>
@@ -236,7 +257,7 @@
             </div>
           `).join('')}
         </div>
-        <div class="ops-funnel-note">${l.totalTickets.toLocaleString()} tickets · Ingress to VCC includes both O1 direct and O2 from Lounge · Egress to Hub is the R2 return leg.</div>
+        <div class="ops-funnel-note">${note}</div>
       </div>
     `;
   }
@@ -250,7 +271,25 @@
     `;
   }
 
-  function oneLocationsTableHtml(locations) {
+  function oneLocationsTableHtml(locations, phase) {
+    // Egress: return-leg (trip4) rider counts per home hub - no Status column,
+    // and the ingress bus columns are replaced by the Waiting/Boarded/Egress
+    // funnel. Non-hub rows (Lounge/VCC) aren't home hubs, so they show dashes.
+    if (phase === 'egress') {
+      return `
+        <table class="ops-table ops-table-compact">
+          <tr><th>Location</th><th>Waiting</th><th>Boarded</th><th>Egress</th></tr>
+          ${locations.map((l) => `
+            <tr>
+              <td class="ops-loc-name">${escapeHtml(l.name)}</td>
+              <td>${l.egress ? l.egress.waiting : '—'}</td>
+              <td>${l.egress ? l.egress.boarded : '—'}</td>
+              <td>${l.egress ? l.egress.enRoute : '—'}</td>
+            </tr>
+          `).join('')}
+        </table>
+      `;
+    }
     return `
       <table class="ops-table ops-table-compact">
         <tr><th>Location</th><th>Status</th><th>Idle</th><th>Board</th><th>Ingress</th><th>Departed</th></tr>
@@ -272,7 +311,7 @@
   // vertical space the location list needs without shrinking type further,
   // since by this point (11 hubs + Lounge + VCC) a single column runs
   // noticeably taller than everything else on screen.
-  function locationsTableHtml(locations) {
+  function locationsTableHtml(locations, phase) {
     const mid = Math.ceil(locations.length / 2);
     const left = locations.slice(0, mid);
     const right = locations.slice(mid);
@@ -280,8 +319,8 @@
       <div class="ops-card">
         <h3 class="ops-card-title">Buses by location</h3>
         <div class="ops-loc-cols">
-          <div class="ops-table-wrap">${oneLocationsTableHtml(left)}</div>
-          <div class="ops-table-wrap">${oneLocationsTableHtml(right)}</div>
+          <div class="ops-table-wrap">${oneLocationsTableHtml(left, phase)}</div>
+          <div class="ops-table-wrap">${oneLocationsTableHtml(right, phase)}</div>
         </div>
       </div>
     `;
@@ -413,7 +452,7 @@
           ${incidentsInlineStatHtml(data.activeIncidents)}
         </div>
         <div class="ops-grid-2">
-          <div>${locationsTableHtml(data.locations)}${fleetTotalsHtml(data.locations)}</div>
+          <div>${locationsTableHtml(data.locations, data.phase)}${fleetTotalsHtml(data.locations)}</div>
           <div>${forecastHtml(data.forecast)}${incidentsHtml(data.incidents)}${activityHtml(data.activity)}</div>
         </div>
       </div>
