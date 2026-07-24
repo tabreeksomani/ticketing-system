@@ -414,6 +414,45 @@
     `;
   }
 
+  // Same hub x timeslot matrix as hubTimeslotMatrixHtml, but showing
+  // available seats (capacity - sold, already computed server-side as
+  // timeslot.available) instead of sold count - answers "where's there
+  // still room" at a glance, same shape so it reads as a companion table.
+  function hubTimeslotRemainingMatrixHtml(hubs) {
+    const allRaw = [...new Set(hubs.reduce((acc, h) => acc.concat(h.timeslots.map(t => t.departureTime)), []))].sort();
+    const colTotals = allRaw.map(raw => hubs.reduce((s, h) => {
+      const slot = h.timeslots.find(t => t.departureTime === raw);
+      return s + (slot ? slot.available : 0);
+    }, 0));
+    const grandTotal = colTotals.reduce((a, b) => a + b, 0);
+
+    return `
+      <div class="table-wrap">
+        <table>
+          <tr><th>Hub</th>${allRaw.map(raw => `<th>${escapeHtml(formatDepartureTime(raw))}</th>`).join('')}<th>Total</th></tr>
+          ${hubs.map(h => {
+            const rowTotal = h.timeslots.reduce((s, t) => s + t.available, 0);
+            return `
+              <tr>
+                <td>${escapeHtml(h.hubName)}</td>
+                ${allRaw.map(raw => {
+                  const slot = h.timeslots.find(t => t.departureTime === raw);
+                  return `<td>${slot ? slot.available : '—'}</td>`;
+                }).join('')}
+                <td style="font-weight:700;">${rowTotal}</td>
+              </tr>
+            `;
+          }).join('')}
+          <tr style="font-weight:700;">
+            <td>Total</td>
+            ${colTotals.map(c => `<td>${c}</td>`).join('')}
+            <td>${grandTotal}</td>
+          </tr>
+        </table>
+      </div>
+    `;
+  }
+
   // Horizontal proportion bar: e.g. "12 of 40 returned" - filled portion + remainder.
   function proportionBar(value, total, opts = {}) {
     const pct = total > 0 ? Math.min(1, value / total) : 0;
@@ -838,6 +877,10 @@
         <div class="card">
           <h2 class="section">Tickets Sold, by Hub &amp; Timeslot </h2>
           ${hubTimeslotMatrixHtml(data)}
+        </div>
+        <div class="card">
+          <h2 class="section">Remaining Capacity, by Hub &amp; Timeslot</h2>
+          ${hubTimeslotRemainingMatrixHtml(data)}
         </div>
       ` : ''}
 
