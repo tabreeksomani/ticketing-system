@@ -83,7 +83,15 @@
       .ops-funnel-label { font-size: 11px; color: #756c5a; margin-top: 5px; }
       .ops-funnel-note { font-size: 11px; color: #A8A093; margin-top: 12px; }
       .ops-grid-2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: start; }
-      @media (max-width: 720px) { .ops-grid-2 { grid-template-columns: 1fr; } }
+      @media (max-width: 720px) {
+        .ops-grid-2 { grid-template-columns: 1fr; }
+        .ops-lifecycle-row { flex-direction: column; align-items: stretch; }
+        .ops-incidents-inline { flex: 1 1 auto; }
+        .ops-funnel { grid-template-columns: repeat(3, 1fr); }
+      }
+      @media (max-width: 480px) {
+        .ops-funnel { grid-template-columns: repeat(2, 1fr); }
+      }
       .ops-loc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
       @media (max-width: 560px) { .ops-loc-cols { grid-template-columns: 1fr; } }
       .ops-table { width: 100%; border-collapse: collapse; font-size: 13px; }
