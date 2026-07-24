@@ -204,8 +204,10 @@
       // their hub have made it all the way to VCC (not out of everyone
       // registered, since plenty haven't departed yet at all).
       { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived, VCC', color: 'green' },
-      // Egress: riders currently on a return (R2) bus back to their hub.
-      { value: (l.enRouteToHub || 0).toLocaleString(), label: 'Egress to Hub', color: null },
+      // Egress: riders currently on a return (R2) bus back to their hub, over
+      // how many boarded on the ingress side (departed their hub) - same
+      // denominator as Arrived, VCC.
+      { value: ratioValue(l.enRouteToHub || 0, l.departedHubTotal), label: 'Egress to Hub', color: null },
     ];
     return `
       <div class="ops-card">
