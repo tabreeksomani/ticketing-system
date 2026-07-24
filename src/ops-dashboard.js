@@ -89,10 +89,13 @@
         .ops-grid-2 { grid-template-columns: 1fr; }
         .ops-lifecycle-row { flex-direction: column; align-items: stretch; }
         .ops-incidents-inline { flex: 1 1 auto; }
-        .ops-funnel { grid-template-columns: repeat(3, 1fr); }
+        /* !important so the small-screen counts win over the per-render
+           inline grid-template-columns set in funnelHtml (which sizes the
+           grid to however many stages the current phase shows). */
+        .ops-funnel { grid-template-columns: repeat(3, 1fr) !important; }
       }
       @media (max-width: 480px) {
-        .ops-funnel { grid-template-columns: repeat(2, 1fr); }
+        .ops-funnel { grid-template-columns: repeat(2, 1fr) !important; }
       }
       .ops-loc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
       @media (max-width: 560px) { .ops-loc-cols { grid-template-columns: 1fr; } }
@@ -205,13 +208,14 @@
 
   function funnelHtml(data) {
     const l = data.lifecycle;
+    const phase = data.phase === 'egress' ? 'egress' : 'ingress';
     const stages = [
       // Departed / total registered - how many of everyone who bought a
       // ticket have actually left their hub.
       { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
-      { value: l.enRouteToLounge.toLocaleString(), label: 'Ingress to Lounge', color: 'purple' },
-      { value: l.atLounge.toLocaleString(), label: `At Lounge${l.avgWaitAtLoungeMinutes !== null ? ` · avg ${l.avgWaitAtLoungeMinutes}m` : ''}`, color: 'orange' },
-      { value: l.enRouteToVcc.toLocaleString(), label: 'Ingress to VCC', color: null },
+      { value: l.enRouteToLounge.toLocaleString(), label: 'Ingress to Lounge', color: 'purple', hideIn: 'egress' },
+      { value: l.atLounge.toLocaleString(), label: `At Lounge${l.avgWaitAtLoungeMinutes !== null ? ` · avg ${l.avgWaitAtLoungeMinutes}m` : ''}`, color: 'orange', hideIn: 'egress' },
+      { value: l.enRouteToVcc.toLocaleString(), label: 'Ingress to VCC', color: null, hideIn: 'egress' },
       // Arrived / departed - what fraction of the riders who actually left
       // their hub have made it all the way to VCC (not out of everyone
       // registered, since plenty haven't departed yet at all).
@@ -219,12 +223,12 @@
       // Egress: riders currently on a return (R2) bus back to their hub, over
       // how many boarded on the ingress side (departed their hub) - same
       // denominator as Arrived, VCC.
-      { value: ratioValue(l.enRouteToHub || 0, l.departedHubTotal), label: 'Egress to Hub', color: null },
-    ];
+      { value: ratioValue(l.enRouteToHub || 0, l.departedHubTotal), label: 'Egress to Hub', color: null, hideIn: 'ingress' },
+    ].filter((s) => s.hideIn !== phase);
     return `
       <div class="ops-card">
         <h3 class="ops-card-title">Rider lifecycle</h3>
-        <div class="ops-funnel">
+        <div class="ops-funnel" style="grid-template-columns: repeat(${stages.length}, 1fr);">
           ${stages.map((s) => `
             <div class="ops-funnel-stage${s.color ? ` ops-stage-${s.color}` : ''}">
               <div class="ops-funnel-value">${s.value}</div>
