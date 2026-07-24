@@ -70,7 +70,10 @@ const APP_ROLES = {
   // picker, scoped to that tab's role, mirroring the Hub tab's 'checkins'.
   checkins_central: ['central'],
   checkins_venue: ['venue'],
-  admin: ['admin'],
+  // 'ops' is an admin-page login scoped to the Ops dashboard only - it shows
+  // up in the admin sign-in picker alongside 'admin', but the dashboard routes
+  // only grant it /dashboard/ops (see src/routes/dashboard.js).
+  admin: ['admin', 'ops'],
   parking: ['parking_dashboard', 'parking_marshal', 'parking_admin'],
 };
 

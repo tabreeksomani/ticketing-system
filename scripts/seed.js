@@ -7,6 +7,7 @@
 // Expected JSON shape:
 // {
 //   "admin": { "password": "..." },
+//   "ops": { "password": "..." },     // optional: Ops-dashboard-only admin login
 //   "hubs": [
 //     {
 //       "id": "surrey",              // optional - derived from name if omitted
@@ -49,7 +50,7 @@ async function main() {
       console.log('admin login: set');
     }
 
-    for (const role of ['venue', 'central']) {
+    for (const role of ['venue', 'central', 'ops']) {
       if (data[role] && data[role].password) {
         await pool.query(
           `INSERT INTO logins (id, role, hub_id, secret) VALUES ($1, $1, NULL, $2)

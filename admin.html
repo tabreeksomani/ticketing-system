@@ -685,7 +685,12 @@
     return data;
   }
 
-  function renderLogin() {
+  async function renderLogin() {
+    // Populate a login picker from the server (same pattern as the check-in
+    // app) - the admin page now hosts more than one login ('admin' plus the
+    // Ops-only 'ops' profile), so the id is chosen here rather than hardcoded.
+    let logins = [];
+    try { logins = await api('/auth/login-ids?app=admin'); } catch (e) { /* form still renders */ }
     document.getElementById('app').innerHTML = `
       <div class="login-screen">
       <header>
@@ -695,15 +700,18 @@
       <div class="login-wrap"><img class="brand-watermark" src="vendor/brand-mark.svg" alt="" /><div class="card login-card">
         <h2 class="section" style="margin-bottom:4px;">Admin</h2>
         <div style="font-size:12px;color:#756c5a;margin-bottom:18px;">Sign in to view live dashboards.</div>
+        <label>Login</label>
+        <select id="loginId">${logins.map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)}</option>`).join('')}</select>
         <label>Password</label><input id="loginPass" type="password" />
         <button class="btn btn-primary btn-full" id="loginBtn">Sign in</button>
       </div></div>
       </div>
     `;
     document.getElementById('loginBtn').onclick = async () => {
+      const id = document.getElementById('loginId').value || 'admin';
       const secret = document.getElementById('loginPass').value;
       try {
-        const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ id: 'admin', secret }) });
+        const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ id, secret }) });
         token = data.token; user = data.user;
         localStorage.setItem('admin_token', token);
         localStorage.setItem('admin_user', JSON.stringify(user));
@@ -737,6 +745,18 @@
     ['ops', 'Ops'],
   ];
 
+  // Which tabs each role may see. Roles not listed here (e.g. 'admin') get the
+  // full set. This is only a UI convenience - the real gate is server-side:
+  // every dashboard route except /dashboard/ops requires the 'admin' role, so
+  // an 'ops' token can't read the other tabs' data even if a tab were shown.
+  const TAB_ACCESS = {
+    ops: ['ops'],
+  };
+  function visibleTabs() {
+    const allowed = TAB_ACCESS[user && user.role];
+    return allowed ? TABS.filter(([id]) => allowed.includes(id)) : TABS;
+  }
+
   function renderAppShell() {
     // Rebuilding #app below discards the current #tabBody outright - if Ops
     // was mounted on it, its poll timer would otherwise keep running against
@@ -755,7 +775,7 @@
         </div>
       </header>
       <main>
-        <div class="tabs">${TABS.map(([id, label]) => `<div class="tab ${tab === id ? 'active' : ''}" data-tab="${id}">${label}</div>`).join('')}</div>
+        <div class="tabs">${visibleTabs().map(([id, label]) => `<div class="tab ${tab === id ? 'active' : ''}" data-tab="${id}">${label}</div>`).join('')}</div>
         <div id="tabBody"></div>
       </main>
     `;
@@ -2463,6 +2483,9 @@
   // 10s poll already uses) - no-op if some other top-level tab is active,
   // since incidents have no visibility outside Buses now.
   async function refreshOpenIncidents() {
+    // Incidents live on the Buses tab, which only the full 'admin' role sees -
+    // skip entirely for restricted logins so they don't poll a 403 endpoint.
+    if (!user || (TAB_ACCESS[user.role] && !TAB_ACCESS[user.role].includes('transport'))) return;
     try { await loadIncidentsData(); } catch (e) { return; }
     if (tab === 'transport') refreshCurrentTabData();
   }
@@ -2483,6 +2506,11 @@
 
   function boot() {
     if (!token || !user) { renderLogin(); return; }
+    // Land on a tab this role is actually allowed to see (the default 'sales'
+    // isn't visible to the ops-only login), otherwise it'd render a tab whose
+    // data endpoint immediately 403s.
+    const allowed = visibleTabs().map(([id]) => id);
+    if (!allowed.includes(tab)) tab = allowed[0];
     renderCurrentTab();
     refreshOpenIncidents();
   }

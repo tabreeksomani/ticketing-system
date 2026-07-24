@@ -412,7 +412,9 @@ function placeLabel(id, hubNameById) {
 // good enough for "what just happened," not a substitute for a real log if
 // this ever needs custom per-event messages.
 router.get('/dashboard/ops', asyncHandler(async (req, res) => {
-  await requireRole(req, ['admin']);
+  // The only dashboard route the ops-only login can reach - every other
+  // route here stays ['admin'], so an 'ops' token is rejected there (403).
+  await requireRole(req, ['admin', 'ops']);
 
   // Demo hub excluded, same reasoning as /dashboard/sales - this is a
   // public-facing screen, not somewhere test scans from a shared device
