@@ -463,10 +463,18 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
   // departed (how many of those have actually left via O1) - same
   // definitions as /dashboard/egress's soldTotal/departedTotal, just scoped
   // to this screen's own hub list.
+  //
+  // return_pool is the denominator for the egress phase: everyone who has to
+  // get home from this hub. That's the ingress-departed riders PLUS egress
+  // walk-ups - a standby issued straight onto an R2 has no ingress leg
+  // (trip1_id NULL) but still needs a seat home, so counting it here keeps the
+  // egress "Departed" ratio <= 100% and stops it from eroding "Waiting".
   const { rows: hubTicketRows } = await pool.query(
     `SELECT t.hub_id,
             COUNT(*)::int AS registered,
-            COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL)::int AS departed
+            COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL)::int AS departed,
+            COUNT(*) FILTER (WHERE bt1.departed_at IS NOT NULL
+                                OR (t.trip1_id IS NULL AND t.trip4_id IS NOT NULL))::int AS return_pool
      FROM tickets t
      LEFT JOIN bus_trips bt1 ON t.trip1_id = bt1.id
      WHERE t.hub_id != 'demo'
@@ -475,20 +483,36 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
   const hubTicketsById = {};
   hubTicketRows.forEach((r) => { hubTicketsById[r.hub_id] = r; });
 
-  // Egress return-leg progress per home hub, all keyed off the ticket's own
-  // trip4 (R2, Premium Lounge -> hub) and that trip's bus status. Powers the
-  // Ops "Buses by location" table once the event flips to the egress phase:
-  //   checkedIn = ticket has been assigned an R2 (trip4_id set)
+  // Egress return buses per destination hub - the mirror of hubBusRows above,
+  // which counts O1 buses by origin=hub. Return buses (R2) run central->hub,
+  // so here we group by destination instead, giving each hub's Idle/Board/
+  // Egress bus columns during the egress phase.
+  const { rows: hubReturnBusRows } = await pool.query(
+    `SELECT bt.destination AS hub_id,
+            COUNT(*) FILTER (WHERE bt.status = 'scheduled')::int AS idle,
+            COUNT(*) FILTER (WHERE bt.status = 'boarding')::int AS boarding,
+            COUNT(*) FILTER (WHERE bt.status = 'departed')::int AS en_route
+     FROM bus_trips bt
+     WHERE bt.leg = 'R2' AND bt.origin = 'central' AND bt.destination != 'demo'
+     GROUP BY bt.destination`
+  );
+  const hubReturnBusById = {};
+  hubReturnBusRows.forEach((r) => { hubReturnBusById[r.hub_id] = r; });
+
+  // Egress rider progress per home hub, keyed off the ticket's own trip4 (R2)
+  // and that trip's bus status. Feeds the last "Departed" column of the egress
+  // location table and the rider-lifecycle funnel:
+  //   checkedIn = ticket assigned an R2 (trip4_id set)
   //   boarded   = checked in but the R2 hasn't left central yet
   //   enRoute   = the R2 has departed central (heading to the hub)
-  // "waiting" (not yet checked in) is derived below against the hub's ingress
-  // total. Arrivals are intentionally not tracked here (no R2 arrival step on
-  // this screen) - an arrived rider simply drops out of all three buckets.
+  //   egressed  = the R2 has departed (left central), en route or arrived -
+  //               the egress analogue of ingress' trip1 departed_at count
   const { rows: hubEgressRows } = await pool.query(
     `SELECT t.hub_id,
             COUNT(*) FILTER (WHERE t.trip4_id IS NOT NULL)::int AS checked_in,
             COUNT(*) FILTER (WHERE t.trip4_id IS NOT NULL AND bt4.departed_at IS NULL)::int AS boarded,
-            COUNT(*) FILTER (WHERE bt4.status = 'departed')::int AS en_route
+            COUNT(*) FILTER (WHERE bt4.status = 'departed')::int AS en_route,
+            COUNT(*) FILTER (WHERE bt4.departed_at IS NOT NULL)::int AS egressed
      FROM tickets t
      LEFT JOIN bus_trips bt4 ON t.trip4_id = bt4.id
      WHERE t.hub_id != 'demo'
@@ -499,21 +523,27 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
 
   const locations = hubRows.map((h) => {
     const b = hubBusById[h.id] || { idle: 0, boarding: 0, en_route: 0, last_departure: null };
-    const t = hubTicketsById[h.id] || { registered: 0, departed: 0 };
-    const e = hubEgressById[h.id] || { checked_in: 0, boarded: 0, en_route: 0 };
+    const t = hubTicketsById[h.id] || { registered: 0, departed: 0, return_pool: 0 };
+    const e = hubEgressById[h.id] || { checked_in: 0, boarded: 0, en_route: 0, egressed: 0 };
+    const rb = hubReturnBusById[h.id] || { idle: 0, boarding: 0, en_route: 0 };
     return {
       id: h.id, name: h.name, kind: 'hub',
       openedAt: h.opened_at, closedAt: h.closed_at,
       idle: b.idle, boarding: b.boarding, enRoute: b.en_route, lastDeparture: b.last_departure,
       registered: t.registered, departed: t.departed,
-      // Egress buckets. waiting counts down from the hub's ingress total (who
-      // actually departed on O1) as riders get checked into a return bus;
-      // clamped at 0 so a data hiccup (more checked in than departed) can't go
-      // negative.
       egress: {
-        waiting: Math.max(0, t.departed - e.checked_in),
-        boarded: e.boarded,
-        enRoute: e.en_route,
+        // Bus columns (mirror ingress: bus counts, here by destination hub).
+        idle: rb.idle, boarding: rb.boarding, enRoute: rb.en_route,
+        // Last column: egressing riders (left central on R2) over the hub's
+        // return pool (ingress-departed + egress walk-ups), so a trip4-only
+        // standby lands in both numerator and denominator rather than pushing
+        // the ratio past 100%.
+        egressed: e.egressed, returnPool: t.return_pool,
+        // Rider buckets for the lifecycle funnel (rider-centric, unlike the
+        // bus columns above). waiting counts down from the same return pool as
+        // riders check into a return bus; clamped at 0 against a data hiccup.
+        waiting: Math.max(0, t.return_pool - e.checked_in),
+        boarded: e.boarded, ridersEnRoute: e.en_route,
       },
     };
   });

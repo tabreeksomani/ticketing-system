@@ -220,17 +220,18 @@
         if (loc.egress) {
           a.waiting += loc.egress.waiting;
           a.boarded += loc.egress.boarded;
-          a.enRoute += loc.egress.enRoute;
+          a.enRoute += loc.egress.ridersEnRoute;
         }
         return a;
       }, { waiting: 0, boarded: 0, enRoute: 0 });
       stages = [
-        { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
         { value: e.waiting.toLocaleString(), label: 'Waiting', color: 'purple' },
         { value: e.boarded.toLocaleString(), label: 'Boarded', color: 'orange' },
-        { value: e.enRoute.toLocaleString(), label: 'Egress', color: 'green' },
+        // Denominator is who actually made it to VCC (arrivedVcc) - the pool
+        // that has to be brought back out - not the ingress-departed total.
+        { value: ratioValue(e.enRoute, l.arrivedVcc), label: 'Egress to Hub', color: 'green' },
       ];
-      note = `${l.totalTickets.toLocaleString()} tickets · Waiting → Boarded → Egress track the R2 return leg by trip4 status; arrivals aren't shown.`;
+      note = `${l.totalTickets.toLocaleString()} tickets · Waiting → Boarded → Egress to Hub track the R2 return leg by trip4 status; arrivals aren't shown.`;
     } else {
       stages = [
         // Departed / total registered - how many of everyone who bought a
@@ -242,7 +243,7 @@
         // Arrived / departed - what fraction of the riders who actually left
         // their hub have made it all the way to VCC (not out of everyone
         // registered, since plenty haven't departed yet at all).
-        { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived, VCC', color: 'green' },
+        { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived at VCC', color: 'green' },
       ];
       note = `${l.totalTickets.toLocaleString()} tickets · Ingress to VCC includes both O1 direct and O2 from Lounge.`;
     }
@@ -272,19 +273,21 @@
   }
 
   function oneLocationsTableHtml(locations, phase) {
-    // Egress: return-leg (trip4) rider counts per home hub - no Status column,
-    // and the ingress bus columns are replaced by the Waiting/Boarded/Egress
-    // funnel. Non-hub rows (Lounge/VCC) aren't home hubs, so they show dashes.
+    // Egress: mirror of the ingress table. First three columns are return-bus
+    // (R2) counts arriving at that hub by status; the last column is egressing
+    // riders / ingress total. No Status column. Non-hub rows (Lounge/VCC)
+    // aren't R2 destinations, so they show dashes.
     if (phase === 'egress') {
       return `
         <table class="ops-table ops-table-compact">
-          <tr><th>Location</th><th>Waiting</th><th>Boarded</th><th>Egress</th></tr>
+          <tr><th>Location</th><th>Idle</th><th>Board</th><th>Egress</th><th>Departed</th></tr>
           ${locations.map((l) => `
             <tr>
               <td class="ops-loc-name">${escapeHtml(l.name)}</td>
-              <td>${l.egress ? l.egress.waiting : '—'}</td>
-              <td>${l.egress ? l.egress.boarded : '—'}</td>
+              <td>${l.egress ? l.egress.idle : '—'}</td>
+              <td>${l.egress ? l.egress.boarding : '—'}</td>
               <td>${l.egress ? l.egress.enRoute : '—'}</td>
+              <td>${l.egress ? `${l.egress.egressed}/${l.egress.returnPool}` : '—'}</td>
             </tr>
           `).join('')}
         </table>
