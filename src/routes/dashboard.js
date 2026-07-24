@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { requireRole } = require('../auth');
 const { asyncHandler } = require('../errors');
+const { readFlags } = require('./flags');
 
 const router = express.Router();
 
@@ -391,6 +392,7 @@ router.get('/dashboard/transport', asyncHandler(async (req, res) => {
     tripSummary,
     active,
     history,
+    phase: (await readFlags()).phase || 'ingress',
   });
 }));
 
@@ -639,6 +641,7 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
     incidents,
     activity: activity.slice(0, 25),
     forecast,
+    phase: (await readFlags()).phase || 'ingress',
   });
 }));
 

@@ -55,6 +55,9 @@
       .ops-badge { font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 20px; }
       .ops-badge-live { background: #DCFCE7; color: #166534; }
       .ops-badge-notstarted { background: #F1F0EC; color: #756c5a; }
+      .ops-badge-ingress { background: #DBEAFE; color: #1D4ED8; }
+      .ops-badge-egress { background: #FEF3C7; color: #92400E; }
+      .ops-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
       .ops-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
       .ops-stat-card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
       .ops-stat-card.ops-danger { background: #FEF2F2; border-color: #FCA5A5; }
@@ -172,6 +175,15 @@
     if (loc.closedAt) return `<span class="ops-loc-closed">Closed ${fmtClock(loc.closedAt)}</span>`;
     if (loc.openedAt) return `<span class="ops-loc-open">Open ${fmtClock(loc.openedAt)}</span>`;
     return '<span class="ops-loc-notopened">Not opened</span>';
+  }
+
+  // Separate from the event-in-progress latch: which half of the operation
+  // we're in, flipped by an admin from the Live tab (flags.phase). Kept
+  // alongside the in-progress badge, not instead of it.
+  function phaseBadgeHtml(phase) {
+    const isEgress = phase === 'egress';
+    const cls = isEgress ? 'ops-badge-egress' : 'ops-badge-ingress';
+    return `<span class="ops-badge ${cls}">${isEgress ? 'Egress' : 'Ingress'}</span>`;
   }
 
   function eventBadgeHtml(locations) {
@@ -390,7 +402,7 @@
       <div class="ops-dash${large ? ' ops-dash-lg' : ''}">
         <div class="ops-head">
           <div><span class="ops-title">Ops Dashboard</span><span class="ops-updated">updated ${timeAgo(lastFetchedAt)}</span></div>
-          ${eventBadgeHtml(data.locations)}
+          <div class="ops-badges">${eventBadgeHtml(data.locations)}${phaseBadgeHtml(data.phase)}</div>
         </div>
         <div class="ops-lifecycle-row">
           ${funnelHtml(data)}
