@@ -12,9 +12,9 @@
      other page, rather than silently clipping real data. */
   html, body { margin: 0; padding: 0; min-height: 100vh; background: #FAF8F3; color: #241C10; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
   main { padding: 20px 28px 24px; width: 100%; }
-  .kiosk-topbar { display: flex; justify-content: flex-end; padding: 8px 28px 0; }
-  .kiosk-topbar button { font-size: 15px; color: #A8A093; background: none; border: none; cursor: pointer; padding: 6px 10px; }
-  .kiosk-topbar button:hover { color: #756c5a; }
+  .kiosk-topbar { display: flex; justify-content: flex-end; padding: 12px 28px 0; gap: 8px; }
+  .kiosk-topbar button { font-size: 13px; color: #8C734C; background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 8px; cursor: pointer; padding: 6px 12px; font-weight: 700; box-shadow: 0 1px 2px rgba(140,115,76,0.04); outline: none; }
+  .kiosk-topbar button:hover { background: #FAF8F3; color: #6b5636; border-color: #DDD3BE; }
   .login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
   .card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 14px; padding: 18px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
   .login-card { max-width: 360px; width: 100%; }
@@ -33,10 +33,25 @@
 <script src="src/ops-dashboard.js"></script>
 <script>
   const API = 'api';
-  // Same localStorage keys as admin.html - a device already signed into
-  // Admin can open this kiosk page without logging in again, and vice versa.
+  // Allow pre-authenticating via URL query parameters (e.g. ?token=...&tv=1)
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get('token');
+  if (urlToken) {
+    localStorage.setItem('admin_token', urlToken);
+    localStorage.setItem('admin_user', JSON.stringify({ id: 'admin', role: 'admin' }));
+  }
+
   let token = localStorage.getItem('admin_token');
   let user = JSON.parse(localStorage.getItem('admin_user') || 'null');
+  
+  // Default mode selection based on device viewport width or url parameter
+  const urlTv = urlParams.get('tv');
+  let useTvMode = urlTv !== null ? (urlTv === '1' || urlTv === 'true') : (window.innerWidth >= 1024);
+
+  // Clean URL parameters if token was present
+  if (urlToken) {
+    window.history.replaceState({}, document.title, window.location.pathname + (urlTv !== null ? `?tv=${urlTv}` : ''));
+  }
 
   function showToast(msg) {
     const t = document.createElement('div');
@@ -63,12 +78,32 @@
     renderLogin();
   }
 
-  function renderTopbar(showSignOut) {
-    document.getElementById('kioskTopbar').innerHTML = showSignOut
-      ? `<div class="kiosk-topbar"><button id="kioskLogoutBtn">Sign out</button></div>`
-      : '';
-    const btn = document.getElementById('kioskLogoutBtn');
-    if (btn) btn.onclick = logout;
+  function renderTopbar(showButtons) {
+    if (showButtons) {
+      document.getElementById('kioskTopbar').innerHTML = `
+        <div class="kiosk-topbar">
+          <button id="kioskFullscreenBtn">Fullscreen</button>
+          <button id="kioskModeToggleBtn">${useTvMode ? '📱 Mobile View' : '🖥️ TV View'}</button>
+          <button id="kioskLogoutBtn">Sign out</button>
+        </div>
+      `;
+      document.getElementById('kioskLogoutBtn').onclick = logout;
+      document.getElementById('kioskModeToggleBtn').onclick = () => {
+        useTvMode = !useTvMode;
+        renderDashboard();
+      };
+      document.getElementById('kioskFullscreenBtn').onclick = () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(err => {
+            showToast(`Fullscreen error: ${err.message}`);
+          });
+        } else {
+          document.exitFullscreen();
+        }
+      };
+    } else {
+      document.getElementById('kioskTopbar').innerHTML = '';
+    }
   }
 
   function renderLogin() {
@@ -97,7 +132,12 @@
   function renderDashboard() {
     renderTopbar(true);
     document.getElementById('app').innerHTML = '<main><div id="opsContainer"></div></main>';
-    OpsDashboard.mount(document.getElementById('opsContainer'), { token, apiBase: API, large: true, fit: true });
+    OpsDashboard.mount(document.getElementById('opsContainer'), { 
+      token, 
+      apiBase: API, 
+      large: useTvMode, 
+      fit: useTvMode 
+    });
   }
 
   function boot() {

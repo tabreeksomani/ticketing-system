@@ -83,7 +83,15 @@
       .ops-funnel-label { font-size: 11px; color: #756c5a; margin-top: 5px; }
       .ops-funnel-note { font-size: 11px; color: #A8A093; margin-top: 12px; }
       .ops-grid-2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: start; }
-      @media (max-width: 720px) { .ops-grid-2 { grid-template-columns: 1fr; } }
+      @media (max-width: 720px) {
+        .ops-grid-2 { grid-template-columns: 1fr; }
+        .ops-lifecycle-row { flex-direction: column; align-items: stretch; }
+        .ops-incidents-inline { flex: 1 1 auto; }
+        .ops-funnel { grid-template-columns: repeat(3, 1fr); }
+      }
+      @media (max-width: 480px) {
+        .ops-funnel { grid-template-columns: repeat(2, 1fr); }
+      }
       .ops-loc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
       @media (max-width: 560px) { .ops-loc-cols { grid-template-columns: 1fr; } }
       .ops-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -307,11 +315,12 @@
   }
 
   function incidentsHtml(incidents) {
+    const shown = incidents.slice(0, 3);
     return `
       <div class="ops-card">
-        <h3 class="ops-card-title">Incidents</h3>
+        <h3 class="ops-card-title">Incidents ${incidents.length > 3 ? `<span style="font-weight:400;text-transform:none;color:#756c5a;"> · showing 3 of ${incidents.length}</span>` : ''}</h3>
         <div>
-          ${incidents.length ? incidents.map((i) => `
+          ${shown.length ? shown.map((i) => `
             <div class="ops-incident">
               <span class="ops-incident-plate">${escapeHtml(i.licensePlate)}</span> — ${escapeHtml(i.description)}
               <div class="ops-incident-time">${timeAgo(i.createdAt)}</div>
@@ -326,7 +335,7 @@
   // glance-able dashboard card only needs "what just happened" - showing
   // all 25 was blowing the card height way past every other section on
   // screen for no benefit over the most recent handful.
-  const ACTIVITY_DISPLAY_LIMIT = 8;
+  const ACTIVITY_DISPLAY_LIMIT = 5;
 
   function activityHtml(activity) {
     const shown = activity.slice(0, ACTIVITY_DISPLAY_LIMIT);
