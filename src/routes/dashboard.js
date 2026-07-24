@@ -661,7 +661,7 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
   // time_to_pl for a hub->central trip, time_to_vcc for a hub->venue direct
   // trip, since those are different distances. O2 (Premium Lounge -> VCC)
   // has no per-hub estimate to draw on (it doesn't originate at a hub), so
-  // it uses a flat assumed duration instead. Buckets are 0-15/15-30/30+ (the
+  // it uses a flat assumed duration instead. Buckets are 0-10/10-20/20+ (the
   // last is open-ended), so every en-route bus is shown - nothing falls
   // outside the window.
   const O2_DURATION_MINUTES = 10;
@@ -674,8 +674,8 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
   );
 
   const forecast = {
-    lounge: { '0-15': 0, '15-30': 0, '30+': 0 },
-    vcc: { '0-15': 0, '15-30': 0, '30+': 0 },
+    lounge: { '0-10': 0, '10-20': 0, '20+': 0 },
+    vcc: { '0-10': 0, '10-20': 0, '20+': 0 },
   };
   const now = Date.now();
   enRouteTripRows.forEach((r) => {
@@ -686,11 +686,11 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
       : ((r.destination === 'venue' ? hubTimeToVccById[r.origin] : hubTimeToPlById[r.origin]) ?? 30);
     const estimatedArrival = new Date(r.departed_at).getTime() + durationMinutes * 60000;
     const minutesOut = (estimatedArrival - now) / 60000;
-    // 30+ is open-ended, so every en-route bus lands in a bucket (including
-    // ones >30m out and overdue ones still marked departed, which fall in 0-15).
-    if (minutesOut <= 15) forecast[bucketKey]['0-15'] += r.onboard;
-    else if (minutesOut <= 30) forecast[bucketKey]['15-30'] += r.onboard;
-    else forecast[bucketKey]['30+'] += r.onboard;
+    // 20+ is open-ended, so every en-route bus lands in a bucket (including
+    // ones >20m out and overdue ones still marked departed, which fall in 0-10).
+    if (minutesOut <= 10) forecast[bucketKey]['0-10'] += r.onboard;
+    else if (minutesOut <= 20) forecast[bucketKey]['10-20'] += r.onboard;
+    else forecast[bucketKey]['20+'] += r.onboard;
   });
 
   res.json({

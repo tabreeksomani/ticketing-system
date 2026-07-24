@@ -361,13 +361,13 @@
         <h3 class="ops-card-title">Arrivals forecast (riders)</h3>
         <div class="ops-table-wrap">
           <table class="ops-table">
-            <tr><th>Location</th><th style="text-transform:none">&lt;15m</th><th style="text-transform:none">15-30m</th><th style="text-transform:none">&gt;30m</th></tr>
+            <tr><th>Location</th><th style="text-transform:none">&lt;10m</th><th style="text-transform:none">10-20m</th><th style="text-transform:none">&gt;20m</th></tr>
             ${rows.map(([name, b]) => `
               <tr>
                 <td>${escapeHtml(name)}</td>
-                <td>${b['0-15']}</td>
-                <td>${b['15-30']}</td>
-                <td>${b['30+']}</td>
+                <td>${b['0-10']}</td>
+                <td>${b['10-20']}</td>
+                <td>${b['20+']}</td>
               </tr>
             `).join('')}
           </table>
