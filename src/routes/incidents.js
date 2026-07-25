@@ -27,7 +27,7 @@ router.post('/incidents', asyncHandler(async (req, res) => {
   const user = await requireRole(req, ['admin']);
   const licensePlate = String(req.body.licensePlate || '').trim();
   const description = String(req.body.description || '').trim();
-  if (!licensePlate) jsonError('licensePlate is required', 400);
+  if (!licensePlate) jsonError('Bus number is required', 400);
   if (!description) jsonError('description is required', 400);
   const { rows } = await pool.query(
     `INSERT INTO incidents (license_plate, description, created_by) VALUES ($1, $2, $3) RETURNING *`,

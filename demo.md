@@ -3,7 +3,7 @@
 A walkthrough script for demoing the whole system end to end: selling a ticket,
 checking it in through all three legs, and watching it show up on the admin
 dashboards — plus every "sad path" (lost ticket, wrong bus, duplicate scan,
-license plate conflict, etc.) baked in at the point where it naturally comes up.
+bus number conflict, etc.) baked in at the point where it naturally comes up.
 
 Run the sections in order the first time — later ones assume tickets sold or
 boarded in earlier ones. Pick **fresh ticket codes** each time you re-run this
@@ -62,13 +62,13 @@ Log into `checkin.html` → **Hubs** tab → `surrey` / `password`.
 
 **Happy path**
 1. Tap **New Trip**. Destination: leave as **Central** (default).
-2. License plate: `DEMOPLATE1`.
+2. Bus number: `DEMOPLATE1`.
 3. Scan `WALK101`, `WALK102`, `WALK103` one at a time — onboard count ticks
    up each time.
 4. Tap **Mark Departed** (only enabled once ≥1 rider has boarded).
 
 **Sad path — lost/forgotten ticket → walk-up standby**
-5. Start a second trip, plate `DEMOPLATE2`, destination Central.
+5. Start a second trip, bus number `DEMOPLATE2`, destination Central.
 6. Scan a code that was never sold, e.g. `LOSTRIDER1`. Instead of an error,
    it's silently issued as a walk-up standby ticket tied to Surrey and
    boarded immediately — no separate step.
@@ -77,11 +77,11 @@ Log into `checkin.html` → **Hubs** tab → `surrey` / `password`.
 7. On `DEMOPLATE2`, scan `WALK101` again (already boarded on `DEMOPLATE1`).
    Expect a rejection — a ticket can only board a given leg once.
 
-**Sad path — duplicate license plate while active**
-8. Try **New Trip** with plate `DEMOPLATE1` again, *before* departing/undoing
+**Sad path — duplicate bus number while active**
+8. Try **New Trip** with bus number `DEMOPLATE1` again, *before* departing/undoing
    the first one. Expect a 409: `Bus DEMOPLATE1 already has an active trip in
    progress — depart or complete that one first`. Depart or complete the
-   original trip, then retry — it should succeed (plates are reusable once
+   original trip, then retry — it should succeed (bus numbers are reusable once
    the previous trip has departed).
 
 **Sad path — Undo Scan**
@@ -95,7 +95,7 @@ Log into `checkin.html` → **Hubs** tab → `surrey` / `password`.
     timeslot is 46 min early" — the scan still succeeds, it's advisory only.
 
 **Happy path — VCC-direct**
-11. Start a third trip, plate `DEMOPLATE3`, destination **VCC** this time.
+11. Start a third trip, bus number `DEMOPLATE3`, destination **VCC** this time.
     Board `WALKVCC1` (a fresh code sold to Surrey), Mark Departed. This bus
     skips Central/O2 entirely — confirm in section 4 it shows up directly on
     Venue's Arrivals list.
@@ -115,7 +115,7 @@ Log into `checkin.html` → **Central** tab → `password`.
 
 ### Send to Venue (O2 — Central → Venue)
 **Happy path**
-4. **New Trip**, plate `DEMOPLATE4`.
+4. **New Trip**, bus number `DEMOPLATE4`.
 5. Scan `WALK101`/`WALK102`/`WALK103` (now arrived at Central). The scan
    screen passively shows each rider's O1 boarding time — informational only,
    never blocks.
@@ -130,7 +130,7 @@ Log into `checkin.html` → **Central** tab → `password`.
 
 ### Send to Hub (R2 — Central → each rider's home hub)
 **Happy path**
-8. Pick **Destination Hub**: `surrey`. Plate `DEMOPLATE5`. New Trip.
+8. Pick **Destination Hub**: `surrey`. Bus number `DEMOPLATE5`. New Trip.
 9. Scan `WALK101` (home hub is Surrey) — boards normally.
 
 **Sad path — wrong bus**
@@ -240,7 +240,7 @@ Log into `volunteer.html` as `surrey`.
 
 ## Cleanup
 
-Everything created in this walkthrough uses plate prefixes `DEMOPLATE*` and
+Everything created in this walkthrough uses bus-number prefixes `DEMOPLATE*` and
 ticket codes `WALK*`/`LOST*`, matching the existing demo-data convention
 (`DEMOA*`, `DEMOB*`, `DEMOSTANDBY1`, `DEMO-BUS-*`) — safe to bulk-delete
 later via a cleanup script once you're done testing.

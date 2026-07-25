@@ -73,7 +73,7 @@ anyone (see above).
    relay-through-the-middle route; VCC sends the bus straight to the venue, skipping
    Central and O2 for everyone on it. This choice is shown clearly on the trip list and
    the scanning screen afterward, so it's always obvious which one a given bus is doing.
-3. Enter the bus's license plate.
+3. Enter the bus number.
 4. Scan tickets one at a time as riders board. Each scan shows a running onboard count.
 5. **Lost/forgotten ticket?** Scan or type any code that isn't a real ticket and the
    system treats it as a walk-up standby: it creates a new ticket tied to your hub on
@@ -106,7 +106,7 @@ Central sits in the middle of the journey and has three separate jobs, one per t
 - Tap **Mark Arrived** as each bus pulls in.
 
 ### Send to Venue (O2 — Central → Venue)
-- Same shape as Hub's Departures: New Trip → license plate → scan tickets → Mark
+- Same shape as Hub's Departures: New Trip → bus number → scan tickets → Mark
   Departed once at least one person's boarded.
 - As a passive, informational-only check, the scan screen shows when a rider last
   boarded their O1 leg (so you can visually catch someone trying to board out of
@@ -122,7 +122,7 @@ Central sits in the middle of the journey and has three separate jobs, one per t
   since you're both at Central. There's no "waiting count" shown here anymore to hint
   at it (see the callout below on why) — it's purely admin's real-world call, relayed
   to you verbally.
-- Pick that hub from the **Destination Hub** dropdown, enter the license plate, and
+- Pick that hub from the **Destination Hub** dropdown, enter the bus number, and
   create the trip.
 - Scan tickets same as any other leg. **One thing R2 checks that others don't:** if a
   scanned ticket's home hub doesn't match the hub this bus is signed for, you'll get an

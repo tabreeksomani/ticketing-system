@@ -299,7 +299,7 @@
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
     overlay.innerHTML = `
       <div class="card" style="max-width:320px;width:100%;margin:0;">
-        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Edit license plate</div>
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Edit bus number</div>
         <input id="editPlateInput" autocomplete="off" value="${escapeHtml(currentPlate)}" style="margin-bottom:16px;" />
         <div style="display:flex;gap:8px;">
           <button class="btn btn-outline" id="editPlateCancelBtn" style="flex:1;">Cancel</button>
@@ -922,8 +922,9 @@
             <option value="central">Premium Lounge</option>
             <option value="venue">VCC</option>
           </select>
-          <label>License Plate</label>
-          <input id="hubNewTripPlate" autocomplete="off" placeholder="e.g. BC1234" />
+          <label>Bus Number</label>
+          <input id="hubNewTripPlate" autocomplete="off" placeholder="e.g. 001C" />
+          <div style="font-size:11px;color:#756c5a;margin:-6px 0 10px;">C = Coast Canada &middot; U = Universal &middot; T = Translink</div>
           <button class="btn btn-primary" id="hubCreateTripBtn">Create Trip</button>
         </div>
       ` : ''}
@@ -1036,7 +1037,7 @@
         try {
           const updated = await api(hubToken, `/trips/${hubActiveTripId}/license-plate`, { method: 'POST', body: JSON.stringify({ licensePlate }) });
           hubTrips = hubTrips.map(t => (t.id === hubActiveTripId ? updated : t));
-          showToast('License plate updated', 'success');
+          showToast('Bus number updated', 'success');
           renderHubBoardingScreen();
         } catch (e) { showToast(e.message); }
       });
@@ -1329,8 +1330,9 @@
       <button class="btn btn-primary" id="centralNewTripBtn" style="margin-bottom:10px;">${icon('bus', 15)} New Trip</button>
       ${centralShowNewTripForm ? `
         <div class="card" style="margin-bottom:10px;">
-          <label>License Plate</label>
-          <input id="centralNewTripPlate" autocomplete="off" placeholder="e.g. BC1234" />
+          <label>Bus Number</label>
+          <input id="centralNewTripPlate" autocomplete="off" placeholder="e.g. 001C" />
+          <div style="font-size:11px;color:#756c5a;margin:-6px 0 10px;">C = Coast Canada &middot; U = Universal &middot; T = Translink</div>
           <button class="btn btn-primary" id="centralCreateTripBtn">Create Trip</button>
         </div>
       ` : ''}
@@ -1419,7 +1421,7 @@
         try {
           const updated = await api(centralToken, `/trips/${centralActiveTripId}/license-plate`, { method: 'POST', body: JSON.stringify({ licensePlate }) });
           centralTrips = centralTrips.map(t => (t.id === centralActiveTripId ? updated : t));
-          showToast('License plate updated', 'success');
+          showToast('Bus number updated', 'success');
           renderCentralBoardingScreen();
         } catch (e) { showToast(e.message); }
       });
@@ -1663,8 +1665,9 @@
             <option value="${h.hubId}">${escapeHtml(h.hubName)}</option>
           `).join('')}
         </select>
-        <label>License Plate</label>
-        <input id="centralNewTripPlate" autocomplete="off" placeholder="e.g. BC1234" />
+        <label>Bus Number</label>
+        <input id="centralNewTripPlate" autocomplete="off" placeholder="e.g. 001C" />
+        <div style="font-size:11px;color:#756c5a;margin:-6px 0 10px;">C = Coast Canada &middot; U = Universal &middot; T = Translink</div>
         <button class="btn btn-primary" id="centralCreateTripBtn" disabled style="opacity:0.4;">Create Trip</button>
       </div>
       ${centralTrips.length ? `

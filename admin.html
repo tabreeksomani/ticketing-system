@@ -551,7 +551,7 @@
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(36,28,16,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;';
     overlay.innerHTML = `
       <div class="card" style="max-width:320px;width:100%;margin:0;">
-        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Edit license plate</div>
+        <div style="font-size:15px;font-weight:600;color:#241C10;margin-bottom:12px;text-align:center;">Edit bus number</div>
         <input id="editPlateInput" autocomplete="off" value="${escapeHtml(trip.licensePlate)}" style="width:100%;padding:10px;border-radius:8px;border:1px solid #D8CDB8;margin-bottom:16px;font-size:14px;box-sizing:border-box;" />
         <div style="display:flex;gap:8px;">
           <button class="btn btn-outline" id="editPlateCancelBtn" style="flex:1;">Cancel</button>
@@ -1234,7 +1234,7 @@
     // started (a volunteer mid-scan who only now notices the plate's wrong
     // shouldn't have to lose already-boarded riders to a delete instead).
     if (t.status === 'scheduled' || t.status === 'boarding') {
-      actions.push({ action: 'edit-plate', label: 'Edit License Plate' });
+      actions.push({ action: 'edit-plate', label: 'Edit Bus Number' });
     }
     // Admin can delete any not-yet-departed trip, even with riders boarded -
     // the backend un-boards them first so they can be rescanned elsewhere.
@@ -1336,7 +1336,7 @@
           showEditPlateModal(trip, async (licensePlate) => {
             try {
               await api(`/trips/${tripId}/license-plate`, { method: 'POST', body: JSON.stringify({ licensePlate }) });
-              showToast('License plate updated', 'success');
+              showToast('Bus number updated', 'success');
               refetchForKind(kind);
             } catch (e) { showToast(e.message); }
           });
@@ -1598,7 +1598,7 @@
           ${onboardRing(t.onboard, 44)}
           <div style="flex:1; min-width:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
             <div>
-              <div style="font-weight:700;font-size:14px;">${escapeHtml(t.licensePlate)}${t.samePlateActive ? ' <span title="This plate has more than one active trip right now" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#D97706;vertical-align:middle;margin-left:4px;"></span>' : ''}${hasIncident ? ' <span title="Open incident logged for this bus" style="color:#DC2626;font-weight:700;">⚠</span>' : ''}</div>
+              <div style="font-weight:700;font-size:14px;">${escapeHtml(t.licensePlate)}${t.samePlateActive ? ' <span title="This bus number has more than one active trip right now" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#D97706;vertical-align:middle;margin-left:4px;"></span>' : ''}${hasIncident ? ' <span title="Open incident logged for this bus" style="color:#DC2626;font-weight:700;">⚠</span>' : ''}</div>
               <div class="ring-meta">${escapeHtml(prettyLocation(t.origin))} → ${escapeHtml(prettyLocation(t.destination))}</div>
               ${timestamps ? `<div class="ring-meta" style="margin-top:2px;">${timestamps}</div>` : ''}
             </div>
@@ -1881,7 +1881,7 @@
       ${transportSubTabBarHtml()}
       <div class="card">
         <label>Search by Vehicle</label>
-        <input id="transportSearchInput" autocomplete="off" placeholder="e.g. BC1234" value="${escapeHtml(transportSearch)}" />
+        <input id="transportSearchInput" autocomplete="off" placeholder="e.g. 001C" value="${escapeHtml(transportSearch)}" />
       </div>
 
       <div class="card">
@@ -2017,7 +2017,7 @@
 
       <div class="card">
         <label>Search by Vehicle</label>
-        <input id="transportSearchInput" autocomplete="off" placeholder="e.g. BC1234" value="${escapeHtml(transportSearch)}" />
+        <input id="transportSearchInput" autocomplete="off" placeholder="e.g. 001C" value="${escapeHtml(transportSearch)}" />
       </div>
 
       <div class="card">
@@ -2102,8 +2102,9 @@
       ${transportSubTabBarHtml()}
       <div class="card">
         <h2 class="section">Log Incident</h2>
-        <label>License Plate</label>
-        <input id="incidentPlateInput" autocomplete="off" placeholder="e.g. BC1234" />
+        <label>Bus Number</label>
+        <input id="incidentPlateInput" autocomplete="off" placeholder="e.g. 001C" />
+        <div style="font-size:11px;color:#756c5a;margin:-6px 0 10px;">C = Coast Canada &middot; U = Universal &middot; T = Translink</div>
         <label style="margin-top:10px;">Description</label>
         <textarea id="incidentDescInput" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1px solid #D8CDB8;font-size:14px;box-sizing:border-box;font-family:inherit;"></textarea>
         <button class="btn btn-primary" id="logIncidentBtn" style="margin-top:10px;">Log Incident</button>
@@ -2135,7 +2136,7 @@
     document.getElementById('logIncidentBtn').onclick = async () => {
       const licensePlate = document.getElementById('incidentPlateInput').value.trim();
       const description = document.getElementById('incidentDescInput').value.trim();
-      if (!licensePlate || !description) { showToast('Plate and description are both required'); return; }
+      if (!licensePlate || !description) { showToast('Bus number and description are both required'); return; }
       try {
         await api('/incidents', { method: 'POST', body: JSON.stringify({ licensePlate, description }) });
         showToast('Incident logged', 'success');

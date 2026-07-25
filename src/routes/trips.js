@@ -234,7 +234,7 @@ router.post('/trips', asyncHandler(async (req, res) => {
   const user = await requireRole(req, [config.originRole, 'admin']);
 
   const licensePlate = String(req.body.licensePlate || '').trim();
-  if (licensePlate === '') jsonError('licensePlate is required', 400);
+  if (licensePlate === '') jsonError('Bus number is required', 400);
 
   let origin;
   if (config.originRole === 'volunteer') {
@@ -621,11 +621,11 @@ router.post('/trips/:id(\\d+)/license-plate', asyncHandler(async (req, res) => {
   requireOriginAccess(user, trip, config);
 
   if (trip.status !== 'scheduled' && trip.status !== 'boarding') {
-    jsonError('Cannot change the license plate after this trip has departed', 409);
+    jsonError('Cannot change the bus number after this trip has departed', 409);
   }
 
   const licensePlate = String(req.body.licensePlate || '').trim();
-  if (licensePlate === '') jsonError('licensePlate is required', 400);
+  if (licensePlate === '') jsonError('Bus number is required', 400);
 
   try {
     await pool.query('UPDATE bus_trips SET license_plate = $1 WHERE id = $2', [licensePlate, tripId]);
