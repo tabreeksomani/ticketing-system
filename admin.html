@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" >
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
@@ -741,8 +741,8 @@
     ['ingress', 'Ingress'],
     ['egress', 'Egress'],
     ['report', 'Report'],
-    ['transport', 'Buses'],
-    ['ops', 'Ops'],
+    ['transport', 'Admin'],
+    ['ops', 'P&T Ops'],
   ];
 
   // Which tabs each role may see. Roles not listed here (e.g. 'admin') get the
@@ -1667,13 +1667,29 @@
   // tabs / Central's sub-tab bar in checkin.html) - embedded directly in
   // each sub-tab's own setTabBody call, not a separate persistent shell,
   // since admin.html doesn't have one for nested tabs yet.
+  // Same "Event in progress" latch the Ops dashboard uses (see
+  // eventBadgeHtml in src/ops-dashboard.js): on the moment any hub has ever
+  // opened, and it stays on through egress even after hubs close. Demo hub
+  // excluded to match the Ops screen. Styled inline since this page doesn't
+  // load the ops-dashboard stylesheet.
+  function eventBadgeHtml() {
+    const hubs = ((transportData && transportData.hubs) || []).filter((h) => h.id !== 'demo');
+    const live = hubs.some((h) => h.openedAt);
+    const style = live ? 'background:#DCFCE7;color:#166534;' : 'background:#F1F0EC;color:#756c5a;';
+    const label = live ? 'Event in progress' : 'Not started';
+    return `<span style="${style}font-size:12px;font-weight:700;padding:5px 12px;border-radius:20px;white-space:nowrap;">${label}</span>`;
+  }
+
   function transportSubTabBarHtml() {
     return `
-      <div class="tabs" style="margin-bottom:14px;">
-        <div class="tab ${transportSubTab === 'live' ? 'active' : ''}" data-transport-subtab="live">Live</div>
-        <div class="tab ${transportSubTab === 'byPlate' ? 'active' : ''}" data-transport-subtab="byPlate">By Plate</div>
-        <div class="tab ${transportSubTab === 'history' ? 'active' : ''}" data-transport-subtab="history">History</div>
-        <div class="tab ${transportSubTab === 'incidents' ? 'active' : ''}" data-transport-subtab="incidents">Incidents${openIncidentPlates.size ? ` <span class="tab-badge">${openIncidentPlates.size}</span>` : ''}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <div class="tabs" style="margin-bottom:0;">
+          <div class="tab ${transportSubTab === 'live' ? 'active' : ''}" data-transport-subtab="live">Live</div>
+          <div class="tab ${transportSubTab === 'byPlate' ? 'active' : ''}" data-transport-subtab="byPlate">By Plate</div>
+          <div class="tab ${transportSubTab === 'history' ? 'active' : ''}" data-transport-subtab="history">History</div>
+          <div class="tab ${transportSubTab === 'incidents' ? 'active' : ''}" data-transport-subtab="incidents">Incidents${openIncidentPlates.size ? ` <span class="tab-badge">${openIncidentPlates.size}</span>` : ''}</div>
+        </div>
+        ${eventBadgeHtml()}
       </div>
     `;
   }
@@ -1709,6 +1725,29 @@
       return `<button data-transport-hub-action="close" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Close</button>${clearBtn}`;
     }
     return `<button data-transport-hub-action="open" data-transport-hub-id="${escapeHtml(hub.id)}" style="background:none;border:none;color:#166534;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Open</button>`;
+  }
+
+  // Event phase control (see migrations/010_flags.sql). Ingress is the
+  // default; once ingress wraps and riders start heading home, an admin flips
+  // this to Egress so the Ops dashboard reflects the switch. Reversible from
+  // here (admin correction), mirroring the hub reopen/clear pattern.
+  function transportPhaseCardHtml(phase) {
+    const isEgress = phase === 'egress';
+    const label = isEgress ? 'Egress' : 'Ingress';
+    const color = isEgress ? '#92400E' : '#1D4ED8';
+    const bg = isEgress ? '#FEF3C7' : '#DBEAFE';
+    const button = isEgress
+      ? `<button data-phase-action="ingress" style="background:none;border:none;color:#57534E;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;">Undo (back to Ingress)</button>`
+      : `<button class="btn btn-primary" data-phase-action="egress">Start egress</button>`;
+    return `
+      <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:12px;color:#756c5a;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Event phase</div>
+          <span style="background:${bg};color:${color};font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;">${label}</span>
+        </div>
+        ${button}
+      </div>
+    `;
   }
 
   function transportLiveHtml() {
@@ -1754,6 +1793,7 @@
 
     setTabBody(`
       ${transportSubTabBarHtml()}
+      ${transportPhaseCardHtml(data.phase)}
       <div class="stat-row">
         <div class="stat-card"><div class="stat-icon">${icon('bus', 20)}</div><div class="stat-value">${data.summary.boarding}</div><div class="stat-label">Boarding</div></div>
         <div class="stat-card"><div class="stat-icon">${icon('users', 20)}</div><div class="stat-value">${data.summary.totalOnboard}</div><div class="stat-label">Onboard Right Now</div></div>
@@ -1855,6 +1895,21 @@
             } catch (e) { showToast(e.message); }
           });
         }
+      };
+    });
+    document.querySelectorAll('[data-phase-action]').forEach((el) => {
+      el.onclick = () => {
+        const value = el.dataset.phaseAction;
+        const [message, title] = value === 'egress'
+          ? ['Mark the event as moving into egress? The Ops dashboard will switch to the Egress phase.', 'Start Egress']
+          : ['Revert the event phase back to Ingress?', 'Back to Ingress'];
+        showConfirmModal(message, title, async () => {
+          try {
+            await api('/flags/phase', { method: 'POST', body: JSON.stringify({ value }) });
+            showToast(value === 'egress' ? 'Egress started' : 'Phase set to ingress', 'success');
+            renderTransportTab();
+          } catch (e) { showToast(e.message); }
+        });
       };
     });
     wireTripMenu('transport');

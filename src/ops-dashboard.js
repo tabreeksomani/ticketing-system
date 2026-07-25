@@ -55,6 +55,9 @@
       .ops-badge { font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 20px; }
       .ops-badge-live { background: #DCFCE7; color: #166534; }
       .ops-badge-notstarted { background: #F1F0EC; color: #756c5a; }
+      .ops-badge-ingress { background: #DBEAFE; color: #1D4ED8; }
+      .ops-badge-egress { background: #FEF3C7; color: #92400E; }
+      .ops-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
       .ops-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
       .ops-stat-card { background: #FFFFFF; border: 1px solid #E8E1D3; border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(140,115,76,0.06); }
       .ops-stat-card.ops-danger { background: #FEF2F2; border-color: #FCA5A5; }
@@ -86,10 +89,13 @@
         .ops-grid-2 { grid-template-columns: 1fr; }
         .ops-lifecycle-row { flex-direction: column; align-items: stretch; }
         .ops-incidents-inline { flex: 1 1 auto; }
-        .ops-funnel { grid-template-columns: repeat(3, 1fr); }
+        /* !important so the small-screen counts win over the per-render
+           inline grid-template-columns set in funnelHtml (which sizes the
+           grid to however many stages the current phase shows). */
+        .ops-funnel { grid-template-columns: repeat(3, 1fr) !important; }
       }
       @media (max-width: 480px) {
-        .ops-funnel { grid-template-columns: repeat(2, 1fr); }
+        .ops-funnel { grid-template-columns: repeat(2, 1fr) !important; }
       }
       .ops-loc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
       @media (max-width: 560px) { .ops-loc-cols { grid-template-columns: 1fr; } }
@@ -174,6 +180,15 @@
     return '<span class="ops-loc-notopened">Not opened</span>';
   }
 
+  // Separate from the event-in-progress latch: which half of the operation
+  // we're in, flipped by an admin from the Live tab (flags.phase). Kept
+  // alongside the in-progress badge, not instead of it.
+  function phaseBadgeHtml(phase) {
+    const isEgress = phase === 'egress';
+    const cls = isEgress ? 'ops-badge-egress' : 'ops-badge-ingress';
+    return `<span class="ops-badge ${cls}">${isEgress ? 'Egress' : 'Ingress'}</span>`;
+  }
+
   function eventBadgeHtml(locations) {
     const hubs = locations.filter((l) => l.kind === 'hub');
     // Latches on the moment any hub first opens and never clears: hubs close
@@ -193,26 +208,49 @@
 
   function funnelHtml(data) {
     const l = data.lifecycle;
-    const stages = [
-      // Departed / total registered - how many of everyone who bought a
-      // ticket have actually left their hub.
-      { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
-      { value: l.enRouteToLounge.toLocaleString(), label: 'Ingress to Lounge', color: 'purple' },
-      { value: l.atLounge.toLocaleString(), label: `At Lounge${l.avgWaitAtLoungeMinutes !== null ? ` · avg ${l.avgWaitAtLoungeMinutes}m` : ''}`, color: 'orange' },
-      { value: l.enRouteToVcc.toLocaleString(), label: 'Ingress to VCC', color: null },
-      // Arrived / departed - what fraction of the riders who actually left
-      // their hub have made it all the way to VCC (not out of everyone
-      // registered, since plenty haven't departed yet at all).
-      { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived, VCC', color: 'green' },
-      // Egress: riders currently on a return (R2) bus back to their hub, over
-      // how many boarded on the ingress side (departed their hub) - same
-      // denominator as Arrived, VCC.
-      { value: ratioValue(l.enRouteToHub || 0, l.departedHubTotal), label: 'Egress to Hub', color: null },
-    ];
+    const phase = data.phase === 'egress' ? 'egress' : 'ingress';
+    let stages;
+    let note;
+    if (phase === 'egress') {
+      // Egress funnel mirrors the "Buses by location" egress columns exactly:
+      // summed from the same per-hub location.egress values so the two panels
+      // can never disagree. Plain counts (like that table), leading with the
+      // ingress total for context. Arrivals aren't tracked, same as the table.
+      const e = data.locations.reduce((a, loc) => {
+        if (loc.egress) {
+          a.waiting += loc.egress.waiting;
+          a.boarded += loc.egress.boarded;
+          a.enRoute += loc.egress.ridersEnRoute;
+        }
+        return a;
+      }, { waiting: 0, boarded: 0, enRoute: 0 });
+      stages = [
+        { value: e.waiting.toLocaleString(), label: 'Waiting', color: 'purple' },
+        { value: e.boarded.toLocaleString(), label: 'Boarded', color: 'orange' },
+        // Denominator is who actually made it to VCC (arrivedVcc) - the pool
+        // that has to be brought back out - not the ingress-departed total.
+        { value: ratioValue(e.enRoute, l.arrivedVcc), label: 'Egress to Hub', color: 'green' },
+      ];
+      note = `${l.totalTickets.toLocaleString()} tickets · Waiting → Boarded → Egress to Hub track the R2 return leg by trip4 status; arrivals aren't shown.`;
+    } else {
+      stages = [
+        // Departed / total registered - how many of everyone who bought a
+        // ticket have actually left their hub.
+        { value: ratioValue(l.departedHubTotal, l.totalTickets), label: 'Ingress Departed', color: 'blue' },
+        { value: l.enRouteToLounge.toLocaleString(), label: 'Ingress to Lounge', color: 'purple' },
+        { value: l.atLounge.toLocaleString(), label: `At Lounge${l.avgWaitAtLoungeMinutes !== null ? ` · avg ${l.avgWaitAtLoungeMinutes}m` : ''}`, color: 'orange' },
+        { value: l.enRouteToVcc.toLocaleString(), label: 'Ingress to VCC', color: null },
+        // Arrived / departed - what fraction of the riders who actually left
+        // their hub have made it all the way to VCC (not out of everyone
+        // registered, since plenty haven't departed yet at all).
+        { value: ratioValue(l.arrivedVcc, l.departedHubTotal), label: 'Arrived at VCC', color: 'green' },
+      ];
+      note = `${l.totalTickets.toLocaleString()} tickets · Ingress to VCC includes both O1 direct and O2 from Lounge.`;
+    }
     return `
       <div class="ops-card">
         <h3 class="ops-card-title">Rider lifecycle</h3>
-        <div class="ops-funnel">
+        <div class="ops-funnel" style="grid-template-columns: repeat(${stages.length}, 1fr);">
           ${stages.map((s) => `
             <div class="ops-funnel-stage${s.color ? ` ops-stage-${s.color}` : ''}">
               <div class="ops-funnel-value">${s.value}</div>
@@ -220,7 +258,7 @@
             </div>
           `).join('')}
         </div>
-        <div class="ops-funnel-note">${l.totalTickets.toLocaleString()} tickets · Ingress to VCC includes both O1 direct and O2 from Lounge · Egress to Hub is the R2 return leg.</div>
+        <div class="ops-funnel-note">${note}</div>
       </div>
     `;
   }
@@ -234,7 +272,27 @@
     `;
   }
 
-  function oneLocationsTableHtml(locations) {
+  function oneLocationsTableHtml(locations, phase) {
+    // Egress: mirror of the ingress table. First three columns are return-bus
+    // (R2) counts arriving at that hub by status; the last column is egressing
+    // riders / ingress total. No Status column. Non-hub rows (Lounge/VCC)
+    // aren't R2 destinations, so they show dashes.
+    if (phase === 'egress') {
+      return `
+        <table class="ops-table ops-table-compact">
+          <tr><th>Location</th><th>Idle</th><th>Board</th><th>Egress</th><th>Departed</th></tr>
+          ${locations.map((l) => `
+            <tr>
+              <td class="ops-loc-name">${escapeHtml(l.name)}</td>
+              <td>${l.egress ? l.egress.idle : '—'}</td>
+              <td>${l.egress ? l.egress.boarding : '—'}</td>
+              <td>${l.egress ? l.egress.enRoute : '—'}</td>
+              <td>${l.egress ? `${l.egress.egressed}/${l.egress.returnPool}` : '—'}</td>
+            </tr>
+          `).join('')}
+        </table>
+      `;
+    }
     return `
       <table class="ops-table ops-table-compact">
         <tr><th>Location</th><th>Status</th><th>Idle</th><th>Board</th><th>Ingress</th><th>Departed</th></tr>
@@ -256,7 +314,7 @@
   // vertical space the location list needs without shrinking type further,
   // since by this point (11 hubs + Lounge + VCC) a single column runs
   // noticeably taller than everything else on screen.
-  function locationsTableHtml(locations) {
+  function locationsTableHtml(locations, phase) {
     const mid = Math.ceil(locations.length / 2);
     const left = locations.slice(0, mid);
     const right = locations.slice(mid);
@@ -264,8 +322,8 @@
       <div class="ops-card">
         <h3 class="ops-card-title">Buses by location</h3>
         <div class="ops-loc-cols">
-          <div class="ops-table-wrap">${oneLocationsTableHtml(left)}</div>
-          <div class="ops-table-wrap">${oneLocationsTableHtml(right)}</div>
+          <div class="ops-table-wrap">${oneLocationsTableHtml(left, phase)}</div>
+          <div class="ops-table-wrap">${oneLocationsTableHtml(right, phase)}</div>
         </div>
       </div>
     `;
@@ -303,13 +361,13 @@
         <h3 class="ops-card-title">Arrivals forecast (riders)</h3>
         <div class="ops-table-wrap">
           <table class="ops-table">
-            <tr><th>Location</th><th style="text-transform:none">&lt;15m</th><th style="text-transform:none">15-30m</th><th style="text-transform:none">&gt;30m</th></tr>
+            <tr><th>Location</th><th style="text-transform:none">&lt;10m</th><th style="text-transform:none">10-20m</th><th style="text-transform:none">&gt;20m</th></tr>
             ${rows.map(([name, b]) => `
               <tr>
                 <td>${escapeHtml(name)}</td>
-                <td>${b['0-15']}</td>
-                <td>${b['15-30']}</td>
-                <td>${b['30+']}</td>
+                <td>${b['0-10']}</td>
+                <td>${b['10-20']}</td>
+                <td>${b['20+']}</td>
               </tr>
             `).join('')}
           </table>
@@ -389,15 +447,15 @@
     el.innerHTML = `
       <div class="ops-dash${large ? ' ops-dash-lg' : ''}">
         <div class="ops-head">
-          <div><span class="ops-title">Ops Dashboard</span><span class="ops-updated">updated ${timeAgo(lastFetchedAt)}</span></div>
-          ${eventBadgeHtml(data.locations)}
+          <div><span class="ops-title">Mulaqat Express Dashboard</span><span class="ops-updated">updated ${timeAgo(lastFetchedAt)}</span></div>
+          <div class="ops-badges">${eventBadgeHtml(data.locations)}${phaseBadgeHtml(data.phase)}</div>
         </div>
         <div class="ops-lifecycle-row">
           ${funnelHtml(data)}
           ${incidentsInlineStatHtml(data.activeIncidents)}
         </div>
         <div class="ops-grid-2">
-          <div>${locationsTableHtml(data.locations)}${fleetTotalsHtml(data.locations)}</div>
+          <div>${locationsTableHtml(data.locations, data.phase)}${fleetTotalsHtml(data.locations)}</div>
           <div>${forecastHtml(data.forecast)}${incidentsHtml(data.incidents)}${activityHtml(data.activity)}</div>
         </div>
       </div>
