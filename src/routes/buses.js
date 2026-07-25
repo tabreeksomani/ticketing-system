@@ -1,3 +1,4 @@
+// note": checked role requirement from "volunteer" to "checkin"
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth, requireRole, requireOwnHub } = require('../auth');
@@ -46,7 +47,7 @@ router.get('/buses', asyncHandler(async (req, res) => {
   const params = [leg];
 
   if (leg === 'hub_to_central') {
-    if (user.role === 'volunteer') {
+    if (user.role === 'checkin') {
       params.push(user.hubId);
       sql += ` AND b.hub_id = $${params.length}`;
     } else if (user.role === 'central') {
@@ -79,7 +80,7 @@ router.get('/buses', asyncHandler(async (req, res) => {
 // what's in the request body, since a volunteer should never be able to
 // create a bus for a different hub or the (dormant) other leg.
 router.post('/buses', asyncHandler(async (req, res) => {
-  const user = await requireRole(req, ['admin', 'volunteer']);
+  const user = await requireRole(req, ['admin', 'checkin']);
   const label = String(req.body.label || '').trim();
   const capacity = req.body.capacity !== undefined ? parseInt(req.body.capacity, 10) : null;
   if (label === '' || !capacity) {
@@ -90,7 +91,7 @@ router.post('/buses', asyncHandler(async (req, res) => {
   let hubId;
   let timeslotId = null;
 
-  if (user.role === 'volunteer') {
+  if (user.role === 'checkin') {
     leg = 'hub_to_central';
     hubId = user.hubId;
   } else {
@@ -294,7 +295,7 @@ router.post('/buses/:id(\\d+)/arrive', asyncHandler(async (req, res) => {
   if (bus.leg !== 'hub_to_central') {
     jsonError('Only hub-to-central buses can be marked arrived', 400);
   }
-  if (user.role === 'volunteer') {
+  if (user.role === 'checkin') {
     requireOwnHub(user, bus.hub_id);
   } else if (!['central', 'admin'].includes(user.role)) {
     jsonError('Not authorized', 403);

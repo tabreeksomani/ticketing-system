@@ -1,3 +1,4 @@
+// note": checked role requirement from "volunteer" to "checkin"
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
@@ -32,10 +33,10 @@ const router = express.Router();
 // right R2 bus home later). R1 has no boarding screen anymore, so it's left
 // without standby support.
 const LEGS = {
-  O1: { originRole: 'volunteer', destination: 'variable', arrivalRole: 'variable', tripCol: 'trip1', allowStandbyCreate: true, standbyHubSource: 'origin' },
+  O1: { originRole: 'checkin', destination: 'variable', arrivalRole: 'variable', tripCol: 'trip1', allowStandbyCreate: true, standbyHubSource: 'origin' },
   O2: { originRole: 'central', destination: 'venue', arrivalRole: 'venue', tripCol: 'trip2', allowStandbyCreate: true, standbyHubSource: 'explicit' },
   R1: { originRole: 'venue', destination: 'variable', arrivalRole: 'variable', tripCol: 'trip3' },
-  R2: { originRole: 'central', destination: 'dynamic-hub', arrivalRole: 'volunteer', tripCol: 'trip4', validateHomeHub: true, allowStandbyCreate: true, standbyHubSource: 'destination' },
+  R2: { originRole: 'central', destination: 'dynamic-hub', arrivalRole: 'checkin', tripCol: 'trip4', validateHomeHub: true, allowStandbyCreate: true, standbyHubSource: 'destination' },
 };
 
 // O1 and R1 both have a variable destination (an admin can send an empty
@@ -46,7 +47,7 @@ function resolveArrivalRole(trip, config) {
   if (config.arrivalRole !== 'variable') return config.arrivalRole;
   if (trip.destination === 'venue') return 'venue';
   if (trip.destination === 'central') return 'central';
-  return 'volunteer';
+  return 'checkin';
 }
 
 function legConfig(leg) {
@@ -101,7 +102,7 @@ function callerOrigin(user, leg, config, requestedOrigin) {
   if (user.role !== config.originRole) {
     jsonError('Not authorized for this leg', 403);
   }
-  if (config.originRole === 'volunteer') {
+  if (config.originRole === 'checkin') {
     if (!requestedOrigin || !user.hubIds.includes(requestedOrigin)) {
       jsonError('origin must be one of your hubs', 403);
     }
@@ -112,14 +113,14 @@ function callerOrigin(user, leg, config, requestedOrigin) {
 
 function isOriginAuthorized(user, trip, config) {
   if (user.role === 'admin') return true;
-  if (config.originRole === 'volunteer') return user.role === 'volunteer' && user.hubIds.includes(trip.origin);
+  if (config.originRole === 'checkin') return user.role === 'checkin' && user.hubIds.includes(trip.origin);
   return user.role === config.originRole;
 }
 
 function isArrivalAuthorized(user, trip, config) {
   if (user.role === 'admin') return true;
   const arrivalRole = resolveArrivalRole(trip, config);
-  if (arrivalRole === 'volunteer') return user.role === 'volunteer' && user.hubIds.includes(trip.destination);
+  if (arrivalRole === 'checkin') return user.role === 'checkin' && user.hubIds.includes(trip.destination);
   return user.role === arrivalRole;
 }
 
@@ -159,7 +160,7 @@ router.get('/trips', asyncHandler(async (req, res) => {
       } else if (user.role === 'central' || user.role === 'venue') {
         params.push(user.role === 'central' ? 'central' : 'venue');
         sql += ` AND bt.destination = $${params.length}`;
-      } else if (user.role === 'volunteer') {
+      } else if (user.role === 'checkin') {
         const destination = req.query.destination;
         if (!destination || !user.hubIds.includes(destination)) {
           jsonError('destination must be one of your hubs', 403);
@@ -169,10 +170,10 @@ router.get('/trips', asyncHandler(async (req, res) => {
       } else {
         jsonError('Not authorized for this leg', 403);
       }
-    } else if (config.arrivalRole === 'volunteer') {
+    } else if (config.arrivalRole === 'checkin') {
       if (user.role === 'admin') {
         // no extra scope - admin sees all
-      } else if (user.role !== 'volunteer') {
+      } else if (user.role !== 'checkin') {
         jsonError('Not authorized for this leg', 403);
       } else {
         const destination = req.query.destination;
@@ -237,10 +238,10 @@ router.post('/trips', asyncHandler(async (req, res) => {
   if (licensePlate === '') jsonError('Bus number is required', 400);
 
   let origin;
-  if (config.originRole === 'volunteer') {
+  if (config.originRole === 'checkin') {
     origin = String(req.body.origin || '').trim() || null;
     if (!origin) jsonError('origin is required', 400);
-    if (user.role === 'volunteer' && !user.hubIds.includes(origin)) {
+    if (user.role === 'checkin' && !user.hubIds.includes(origin)) {
       jsonError('origin must be one of your hubs', 403);
     }
     // Opened/closed are both guards around trip creation (see

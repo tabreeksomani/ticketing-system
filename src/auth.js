@@ -1,3 +1,4 @@
+// note": checked role requirement from "volunteer" to "checkin"
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { jsonError } = require('./errors');
@@ -44,7 +45,7 @@ async function requireRole(req, allowedRoles) {
 
 /** For hub-scoped actions: must be a volunteer AND cover the given hubId. */
 function requireOwnHub(user, hubId) {
-  if (user.role !== 'volunteer' || !(user.hubIds || []).includes(hubId)) {
+  if (user.role !== 'checkin' || !(user.hubIds || []).includes(hubId)) {
     jsonError('Not authorized for this hub', 403);
   }
 }

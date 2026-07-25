@@ -1,3 +1,4 @@
+// note": checked role requirement from "volunteer" to "checkin"
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
@@ -30,7 +31,7 @@ router.get('/hubs/:hubId/timeslots', asyncHandler(async (req, res) => {
   // Writes (selling against a timeslot) are gated separately in tickets.js.
   const user = await requireAuth(req);
   const hubId = decodeURIComponent(req.params.hubId);
-  if (user.role === 'volunteer' && !user.hubIds.includes(hubId)) {
+  if (user.role === 'checkin' && !user.hubIds.includes(hubId)) {
     jsonError('Not authorized for this hub', 403);
   }
   const { rows } = await pool.query(`${TIMESLOT_SELECT} WHERE t.hub_id = $1 ORDER BY t.departure_time ASC`, [hubId]);
@@ -50,9 +51,9 @@ router.get('/hubs', asyncHandler(async (req, res) => {
 // unlike closing, it doesn't gate anything (yet). Same authorization shape
 // as closing: the hub's own volunteer, or admin.
 router.post('/hubs/:hubId/open', asyncHandler(async (req, res) => {
-  const user = await requireRole(req, ['volunteer', 'admin']);
+  const user = await requireRole(req, ['checkin', 'admin']);
   const hubId = decodeURIComponent(req.params.hubId);
-  if (user.role === 'volunteer' && !user.hubIds.includes(hubId)) {
+  if (user.role === 'checkin' && !user.hubIds.includes(hubId)) {
     jsonError('Not authorized for this hub', 403);
   }
   const { rows } = await pool.query('SELECT id FROM hubs WHERE id = $1', [hubId]);
@@ -67,9 +68,9 @@ router.post('/hubs/:hubId/open', asyncHandler(async (req, res) => {
 // Either the hub's own volunteer or admin can close it - same authorization
 // shape as creating a trip there in the first place.
 router.post('/hubs/:hubId/close', asyncHandler(async (req, res) => {
-  const user = await requireRole(req, ['volunteer', 'admin']);
+  const user = await requireRole(req, ['checkin', 'admin']);
   const hubId = decodeURIComponent(req.params.hubId);
-  if (user.role === 'volunteer' && !user.hubIds.includes(hubId)) {
+  if (user.role === 'checkin' && !user.hubIds.includes(hubId)) {
     jsonError('Not authorized for this hub', 403);
   }
   const { rows } = await pool.query('SELECT id, opened_at FROM hubs WHERE id = $1', [hubId]);
