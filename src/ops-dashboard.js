@@ -447,7 +447,7 @@
     el.innerHTML = `
       <div class="ops-dash${large ? ' ops-dash-lg' : ''}">
         <div class="ops-head">
-          <div><span class="ops-title">Ops Dashboard</span><span class="ops-updated">updated ${timeAgo(lastFetchedAt)}</span></div>
+          <div><span class="ops-title">Mulaqat Express Dashboard</span><span class="ops-updated">updated ${timeAgo(lastFetchedAt)}</span></div>
           <div class="ops-badges">${eventBadgeHtml(data.locations)}${phaseBadgeHtml(data.phase)}</div>
         </div>
         <div class="ops-lifecycle-row">
