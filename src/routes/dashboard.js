@@ -596,6 +596,27 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
      WHERE t.hub_id != 'demo'`
   );
   const f = funnelRows[0];
+
+  // We intentionally send some O2 (Lounge->VCC) buses out empty - riders board
+  // them without scanning, so they carry no trip2_id and the funnel still
+  // counts those people as "at lounge." For each empty O2 bus, assume a full
+  // load and shift that many riders forward so the dashboard reflects who has
+  // really moved: once departed they leave At Lounge for Ingress to VCC, and
+  // once arrived they leave Ingress to VCC for Arrived VCC.
+  const EMPTY_BUS_ASSUMED_PAX = 60;
+  const { rows: emptyBusRows } = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE bt.arrived_at IS NULL)::int AS en_route,
+       COUNT(*) FILTER (WHERE bt.arrived_at IS NOT NULL)::int AS arrived
+     FROM bus_trips bt
+      WHERE bt.leg = 'O2'
+        AND bt.departed_at IS NOT NULL
+        AND bt.origin != 'demo' AND bt.destination != 'demo'
+        AND NOT EXISTS (SELECT 1 FROM tickets tk WHERE tk.trip2_id = bt.id)`
+  );
+  const emptyBusEnRoutePax = emptyBusRows[0].en_route * EMPTY_BUS_ASSUMED_PAX;
+  const emptyBusArrivedPax = emptyBusRows[0].arrived * EMPTY_BUS_ASSUMED_PAX;
+
   // "Riders departed total" for the stat row - same cumulative definition as
   // lifecycle.notDeparted derives from (bt1.departed_at IS NOT NULL), just
   // surfaced as its own headline number instead of buried in the funnel.
@@ -604,10 +625,11 @@ router.get('/dashboard/ops', asyncHandler(async (req, res) => {
     totalTickets,
     departedHubTotal: ridersDepartedTotal,
     enRouteToLounge: f.en_route_to_lounge,
-    atLounge: f.at_lounge,
+    // Both en-route and arrived empty-bus riders have left the lounge.
+    atLounge: Math.max(0, f.at_lounge - emptyBusEnRoutePax - emptyBusArrivedPax),
     avgWaitAtLoungeMinutes: f.avg_wait_at_lounge_minutes !== null ? Math.round(f.avg_wait_at_lounge_minutes) : null,
-    enRouteToVcc: f.en_route_to_vcc,
-    arrivedVcc: f.arrived_vcc,
+    enRouteToVcc: f.en_route_to_vcc + emptyBusEnRoutePax,
+    arrivedVcc: f.arrived_vcc + emptyBusArrivedPax,
     enRouteToHub: f.en_route_to_hub,
   };
 
