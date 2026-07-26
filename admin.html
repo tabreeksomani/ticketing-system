@@ -2560,6 +2560,20 @@
     loadCurrentTabBody();
   }
 
+  // Close any open 3-dots trip dropdown menu when clicking anywhere outside of it
+  document.addEventListener('click', (e) => {
+    if (openTripMenu !== null) {
+      const isDropdown = e.target.closest('.trip-menu-dropdown');
+      const isToggle = e.target.closest('[data-trip-menu-toggle]');
+      if (!isDropdown && !isToggle) {
+        openTripMenu = null;
+        if (['ingress', 'egress', 'transport'].includes(tab)) {
+          rerenderForKind(tab);
+        }
+      }
+    }
+  });
+
   function boot() {
     if (!token || !user) { renderLogin(); return; }
     // Land on a tab this role is actually allowed to see (the default 'sales'
